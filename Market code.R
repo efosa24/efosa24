@@ -102,7 +102,7 @@ for (metric in metrics0){
          height = 12, dpi = 300)
 }
 ################################################################################
-#Group by metrics and date to visualize for ascension
+#Group by metrics and date to visualize 
 ################################################################################
 
 df2 <- df %>%
@@ -118,7 +118,7 @@ df2 <- df %>%
 
 metrics <- unique(df2$Metric_Name)
 ###############################################################################
-#Visualize trends for each metrics in ascension
+#Visualize trends for each metrics 
 ################################################################################
 
 ##loop through each market and metric name combination
@@ -263,7 +263,7 @@ for (metric in metrics2){
            height = 12, dpi=300)
 }
 #############################################################################
-#Group my metrics to determine the performance of metrics (Ascension)
+#Group my metrics to determine the performance of metrics 
 #############################################################################
 
 df5 <-df3 %>%
@@ -288,7 +288,7 @@ df5 <-df3 %>%
 
 metrics3 <- unique(df5$Metric_Name)
 ############################################################################
-#Visualize trends/preformance of the metrics for ascension
+#Visualize trends/preformance of the metrics 
 #############################################################################
 
 ##loop through each market and metric name combination
@@ -316,7 +316,7 @@ for (i in 1:length(metrics)) {
   
 }
 #############################################################################
-###Visualize the distribution of ascension metrics with box plot
+###Visualize the distribution of metrics with box plot
 #############################################################################
 p1 <- ggplot(df5, aes(Metric_Name, sum_value1, fill= Metric_Name))+
   stat_boxplot(geom = "errorbar")+geom_boxplot()+
