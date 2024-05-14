@@ -9,16 +9,16 @@
 
 
 ##Load the CCV Data
-df <- read.csv("C:/Users/FEriam01/OneDrive - Kenvue/Documents/Oversight metrics/Feb 2024/Data Comp.csv", 
+df <- read.csv("C:/Users/Documents/Oversight metrics/Feb 2024/Data Comp.csv", 
                header = TRUE, check.names = FALSE)
 df$company[is.na(df$company)] <- "NA"
 
 head(df)
 #Load of McNeil Data
 
-McNeil_Data <- read.csv("C:/Users/FEriam01/OneDrive - Kenvue/Documents/Oversight metrics/Feb 2024/Feb McNeil Closure Data.csv") 
+McNeil_Data <- read.csv("C:/Users/Documents/Oversight metrics/Feb 2024/Feb McNeil Closure Data.csv") 
 
-#df2 <- read.csv("C:/Users/FEriam01/OneDrive - Kenvue/Documents/Oversight metrics/Central CV Open Case.csv",
+#df2 <- read.csv("C:/Users/Documents/Oversight metrics/Central CV Open Case.csv",
                # header = TRUE, check.names = FALSE)
 #head(df2)
 
