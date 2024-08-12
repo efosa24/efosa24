@@ -1,10 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Mon Aug 12 13:03:08 2024
-
-@author: festu
-"""
-
 import pandas as pd
 from datetime import datetime, timedelta
 
@@ -39,6 +32,9 @@ def calculate_dates_for_previous_month():
     return adjusted_start_date, adjusted_end_date
 
 def extract_data_for_previous_month(df):
+    # Convert "Date Entered" column to datetime if it's not already
+    df['Date Entered'] = pd.to_datetime(df['Date Entered'], errors='coerce')
+    
     # Calculate the dates for the previous month
     start_date, end_date = calculate_dates_for_previous_month()
     
