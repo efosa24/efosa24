@@ -11,15 +11,18 @@ calculate_dates_for_previous_month <- function() {
   previous_year <- year(last_day_of_previous_month)
   
   # Determine the start date for the previous month
-  start_date <- as.Date(paste0(previous_year, "-", previous_month, "-01"))
+  start_date <- as.POSIXct(paste0(previous_year, "-", previous_month, "-01"), format="%Y-%m-%d", tz = "UTC")
   
-  while (month(start_date) == previous_month) {
+  # Initialize a list to hold the start and end dates
+  dates <- list()
+  
+  while (!is.na(start_date) && month(start_date) == previous_month) {
     # Calculate the end date (4 weeks = 28 days after the start date)
     end_date <- start_date + days(27)
     
     # Determine the number of days remaining in the month
     next_month_start_date <- floor_date(end_date + days(1), "month")
-    days_remaining_in_month <- as.integer(next_month_start_date - end_date - days(1))
+    days_remaining_in_month <- as.numeric(difftime(next_month_start_date, end_date, units = "days")) - 1
     
     # If days_remaining_in_month is exactly 7, treat it as the 5th week
     if (days_remaining_in_month == 7) {
@@ -30,17 +33,20 @@ calculate_dates_for_previous_month <- function() {
     adjusted_start_date <- start_date - days(45)
     adjusted_end_date <- end_date - days(45)
     
-    # Return the adjusted start and end dates
-    return(list(start_date = adjusted_start_date, end_date = adjusted_end_date))
+    # Add the adjusted start and end dates to the list
+    dates$start_date <- adjusted_start_date
+    dates$end_date <- adjusted_end_date
     
     # Move to the next period (next day after the current end date)
     start_date <- end_date + days(1)
   }
+  
+  return(dates)
 }
 
 extract_data_for_previous_month <- function(df) {
-  # Convert "Date Entered" column to date if it's not already
-  df$Date_Entered <- as.Date(df$Date_Entered, format="%Y-%m-%d")
+  # Convert "Date Entered" column to POSIXct if it's not already
+  df$Date_Entered <- as.POSIXct(df$Date_Entered, format="%Y-%m-%d %H:%M:%S", tz = "UTC")
   
   # Calculate the dates for the previous month
   dates <- calculate_dates_for_previous_month()
