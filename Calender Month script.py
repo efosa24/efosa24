@@ -1,10 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Mon Sep  9 11:24:24 2024
-
-@author: festu
-"""
-
 import pandas as pd
 from datetime import datetime, timedelta
 
@@ -52,12 +45,21 @@ def extract_data_for_current_month(df):
     # Calculate the dates from January for the current report month
     start_date, end_date = calculate_dates_from_january()
     
-    # Print the calculated date range for debugging
-    print(f"Start Date: {start_date}, End Date: {end_date}")
+    # Debug: Print the start and end date before filtering
+    print(f"Calculated Start Date: {start_date}")
+    print(f"Calculated End Date: {end_date}")
+    
+    # Debug: Print the min and max dates in the dataset
+    print(f"Min Date in Dataset: {df['Date Entered'].min()}")
+    print(f"Max Date in Dataset: {df['Date Entered'].max()}")
     
     # Filter data based on 'Date Entered' in GCC
     filtered_data = df[(df['Date Entered'] >= start_date) & (df['Date Entered'] <= end_date)]
     
+    # Debug: Print number of rows returned after filtering
+    print(f"Number of rows returned: {len(filtered_data)}")
+    
+    # Return filtered data
     return filtered_data
 
 # Example usage:
