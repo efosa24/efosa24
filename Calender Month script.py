@@ -1,75 +1,68 @@
 import pandas as pd
 from datetime import datetime, timedelta
 
-def calculate_dates_continuous_from_january():
-    # Get the current date (report run time)
+def calculate_correct_periods():
+    # Get the current date
     current_date = datetime.now()
     current_year = current_date.year
 
-    # Initialize the start date as January 1st of the current year
+    # Start from January 1st of the current year
     start_date = datetime(current_year, 1, 1)
-    
-    # Initialize the list to store periods
+
+    # List to store all periods
     periods = []
 
     while True:
-        # Calculate the end date (4 weeks = 28 days after the start date)
+        # Calculate a period of 28 days
         end_date = start_date + timedelta(days=27)
 
-        # Determine the number of days remaining in the month
-        next_month_start_date = (end_date + timedelta(days=1)).replace(day=1)
-        days_remaining_in_month = (next_month_start_date - end_date - timedelta(days=1)).days
+        # Handle the remaining days in the current month (up to 7)
+        next_month_start = (end_date + timedelta(days=1)).replace(day=1)
+        remaining_days = (next_month_start - end_date - timedelta(days=1)).days
+        if remaining_days > 0 and remaining_days <= 7:
+            end_date += timedelta(days=remaining_days)
 
-        # If there are up to 7 remaining days, treat them as a 5th week
-        if days_remaining_in_month > 0 and days_remaining_in_month <= 7:
-            end_date += timedelta(days=days_remaining_in_month)
-
-        # Adjust dates by subtracting 45 days after calculating the period
+        # Adjust the start and end dates by subtracting 45 days
         adjusted_start_date = start_date - timedelta(days=45)
         adjusted_end_date = end_date - timedelta(days=45)
 
-        # Store the adjusted period
+        # Append the period
         periods.append((adjusted_start_date, adjusted_end_date))
 
-        # Debugging: Print each calculated period
-        print(f"Original Start: {start_date}, Original End: {end_date}")
-        print(f"Adjusted Start: {adjusted_start_date}, Adjusted End: {adjusted_end_date}")
+        # Print the periods for debugging purposes
+        print(f"Original Period: {start_date} to {end_date}")
+        print(f"Adjusted Period: {adjusted_start_date} to {adjusted_end_date}")
 
-        # Stop when the calculated period reaches the current date
+        # Stop when we have covered up to the current date
         if end_date >= current_date:
             break
 
-        # Move to the next period (1 day after the current end date)
+        # Move the start date forward for the next period
         start_date = end_date + timedelta(days=1)
 
-    # Return the second-to-last period (previous month)
+    # Return the period for the previous month (second to last)
     return periods[-2]
 
-def extract_data_for_current_report(df):
-    # Convert "Date Entered" column to datetime if it's not already
+def extract_data_with_correct_period(df):
+    # Ensure 'Date Entered' is in datetime format
     df['Date Entered'] = pd.to_datetime(df['Date Entered'], errors='coerce')
-    
-    # Calculate the correct dates from January for the current report
-    start_date, end_date = calculate_dates_continuous_from_january()
-    
-    # Debugging: Print the calculated start and end dates
-    print(f"Calculated Start Date: {start_date}")
-    print(f"Calculated End Date: {end_date}")
-    
-    # Filter data based on 'Date Entered' in GCC
-    filtered_data = df[(df['Date Entered'] >= start_date) & (df['Date Entered'] <= end_date)]
-    
-    # Debugging: Print the number of rows returned after filtering
-    print(f"Number of rows returned: {len(filtered_data)}")
-    
-    return filtered_data
+
+    # Get the correct start and end date for the previous month
+    start_date, end_date = calculate_correct_periods()
+
+    # Print the calculated start and end dates for debugging
+    print(f"Final Start Date: {start_date}")
+    print(f"Final End Date: {end_date}")
+
+    # Filter the dataframe based on the calculated date range
+    filtered_df = df[(df['Date Entered'] >= start_date) & (df['Date Entered'] <= end_date)]
+
+    # Debugging: print number of rows filtered
+    print(f"Number of rows after filtering: {len(filtered_df)}")
+
+    return filtered_df
 
 # Example usage:
-# Assuming df is your DataFrame containing the 'Date Entered' column from GCC
-# df = pd.read_csv('your_gcc_data.csv')  # Load your data here
-
-# Extract data for the current month
-extracted_data = extract_data_for_current_report(df)
-
-# Output the extracted data
-print(extracted_dataa)
+# df = pd.read_csv('your_data.csv')  # Load your data here
+# filtered_data = extract_data_with_correct_period(df)
+# print(filtered_data)
