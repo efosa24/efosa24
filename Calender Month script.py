@@ -13,12 +13,14 @@ def calculate_correct_periods():
     periods = []
 
     while True:
-        # Calculate a period of 28 days
+        # Calculate a period of 28 days (4 weeks)
         end_date = start_date + timedelta(days=27)
 
         # Handle the remaining days in the current month (up to 7)
         next_month_start = (end_date + timedelta(days=1)).replace(day=1)
         remaining_days = (next_month_start - end_date - timedelta(days=1)).days
+        
+        # If there are up to 7 remaining days, include them as a 5th week
         if remaining_days > 0 and remaining_days <= 7:
             end_date += timedelta(days=remaining_days)
 
@@ -29,7 +31,7 @@ def calculate_correct_periods():
         # Append the period
         periods.append((adjusted_start_date, adjusted_end_date))
 
-        # Print the periods for debugging purposes
+        # Debugging: Print the periods for clarity
         print(f"Original Period: {start_date} to {end_date}")
         print(f"Adjusted Period: {adjusted_start_date} to {adjusted_end_date}")
 
