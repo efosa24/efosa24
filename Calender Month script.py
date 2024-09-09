@@ -1,14 +1,15 @@
+import pandas as pd
 from datetime import datetime, timedelta
 
-def calculate_periods_with_carryover():
-    # Starting from January 1st of the current year
+def calculate_dates_continuously_from_january():
+    # Get the current year and initialize from January 1st
     current_year = datetime.now().year
     start_date = datetime(current_year, 1, 1)
     
     # List to store all the periods
     periods = []
 
-    # Continue calculating periods until we reach the current date
+    # Continue calculating periods until the current date
     while True:
         # Calculate the original end date as 28 days after the start date (4 weeks)
         end_date = start_date + timedelta(days=27)
@@ -37,11 +38,34 @@ def calculate_periods_with_carryover():
 
     return periods
 
-# Example usage:
-periods = calculate_periods_with_carryover()
+def extract_data_based_on_dates(df):
+    # Convert "Date Entered" column to datetime if it's not already
+    df['Date Entered'] = pd.to_datetime(df['Date Entered'], errors='coerce')
+    
+    # Get the correct start and end date for the previous month
+    periods = calculate_dates_continuously_from_january()
 
-# Print each period with original and adjusted dates
-for original_start, original_end, adjusted_start, adjusted_end in periods:
-    print(f"Original Start: {original_start}, Original End: {original_end}")
-    print(f"Adjusted Start: {adjusted_start}, Adjusted End: {adjusted_end}")
-    print("---------")
+    # Extracting the last adjusted period
+    adjusted_start, adjusted_end = periods[-2][2], periods[-2][3]
+    
+    # Debugging: Print the adjusted start and end dates
+    print(f"Adjusted Start Date: {adjusted_start}")
+    print(f"Adjusted End Date: {adjusted_end}")
+    
+    # Filter data based on 'Date Entered' in your DataFrame (df)
+    filtered_data = df[(df['Date Entered'] >= adjusted_start) & (df['Date Entered'] <= adjusted_end)]
+
+    # Debugging: Print the number of rows filtered
+    print(f"Number of rows after filtering: {len(filtered_data)}")
+
+    return filtered_data
+
+# Example usage:
+# Assuming df is your DataFrame containing the 'Date Entered' column from GCC
+# df = pd.read_csv('your_data.csv')  # Load your data here
+
+# Extract data for the correct adjusted period
+# filtered_data = extract_data_based_on_dates(df)
+
+# Output the filtered data
+# print(filtered_data)
