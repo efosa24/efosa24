@@ -20,7 +20,7 @@ def calculate_dates_continuous_from_january():
         next_month_start_date = (end_date + timedelta(days=1)).replace(day=1)
         days_remaining_in_month = (next_month_start_date - end_date - timedelta(days=1)).days
 
-        # If there are remaining days <= 7, include them as a 5th week
+        # If there are up to 7 remaining days, treat them as a 5th week
         if days_remaining_in_month > 0 and days_remaining_in_month <= 7:
             end_date += timedelta(days=days_remaining_in_month)
 
@@ -28,21 +28,22 @@ def calculate_dates_continuous_from_january():
         adjusted_start_date = start_date - timedelta(days=45)
         adjusted_end_date = end_date - timedelta(days=45)
 
-        # Store the period (adjusted)
+        # Store the period
         periods.append((adjusted_start_date, adjusted_end_date))
 
-        # Stop when the calculated end date exceeds the current date
-        if end_date >= current_date:
+        # Print each calculated period for debugging
+        print(f"Original Start: {start_date}, Original End: {end_date}")
+        print(f"Adjusted Start: {adjusted_start_date}, Adjusted End: {adjusted_end_date}")
+
+        # Stop when the current month is exceeded
+        if start_date >= current_date:
             break
 
         # Move to the next period (next day after the current end date)
         start_date = end_date + timedelta(days=1)
 
-    # Debugging: Print all calculated periods to check if they are correct
-    print(f"Calculated periods: {periods}")
-
     # Return the second-to-last period for the previous month
-    return periods[-2]  # Return the second-to-last period for the previous month
+    return periods[-2]
 
 def extract_data_for_current_report(df):
     # Convert "Date Entered" column to datetime if it's not already
