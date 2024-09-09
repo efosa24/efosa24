@@ -1,7 +1,6 @@
 import pandas as pd
 from datetime import datetime, timedelta
 
-
 def calculate_dates_continuous_from_january():
     # Get the current date (report run time) and determine the current month
     current_date = datetime.now()
@@ -38,8 +37,8 @@ def calculate_dates_continuous_from_january():
 
         # Move to the next period (next day after the current end date)
         start_date = end_date + timedelta(days=1)
-    
-    # Return the last complete period for the previous month
+
+    # Return the last calculated period for the previous month
     return periods[-2]  # Return the second-to-last period as it reflects the previous month
 
 def extract_data_for_current_report(df):
@@ -69,4 +68,4 @@ def extract_data_for_current_report(df):
 extracted_data = extract_data_for_current_report(df)
 
 # Output the extracted data
-print(extracted_data)
+print(extracted_data1)
