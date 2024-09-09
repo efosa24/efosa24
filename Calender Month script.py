@@ -2,7 +2,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 
 def calculate_dates_continuous_from_january():
-    # Get the current date (report run time) and determine the current month
+    # Get the current date (report run time)
     current_date = datetime.now()
     current_year = current_date.year
 
@@ -20,29 +20,29 @@ def calculate_dates_continuous_from_january():
         next_month_start_date = (end_date + timedelta(days=1)).replace(day=1)
         days_remaining_in_month = (next_month_start_date - end_date - timedelta(days=1)).days
 
-        # If there are up to 7 remaining days, treat them as a 5th week
+        # If there are up to 7 remaining days, include them as a 5th week
         if days_remaining_in_month > 0 and days_remaining_in_month <= 7:
             end_date += timedelta(days=days_remaining_in_month)
 
-        # Adjust dates by subtracting 45 days
+        # Adjust dates by subtracting 45 days after calculating the period
         adjusted_start_date = start_date - timedelta(days=45)
         adjusted_end_date = end_date - timedelta(days=45)
 
-        # Store the period
+        # Store the adjusted period
         periods.append((adjusted_start_date, adjusted_end_date))
 
-        # Print each calculated period for debugging
+        # Debugging: Print each calculated period
         print(f"Original Start: {start_date}, Original End: {end_date}")
         print(f"Adjusted Start: {adjusted_start_date}, Adjusted End: {adjusted_end_date}")
 
-        # Stop when the current month is exceeded
-        if start_date >= current_date:
+        # Stop when the calculated period reaches the current date
+        if end_date >= current_date:
             break
 
-        # Move to the next period (next day after the current end date)
+        # Move to the next period (1 day after the current end date)
         start_date = end_date + timedelta(days=1)
 
-    # Return the second-to-last period for the previous month
+    # Return the second-to-last period (previous month)
     return periods[-2]
 
 def extract_data_for_current_report(df):
@@ -52,7 +52,7 @@ def extract_data_for_current_report(df):
     # Calculate the correct dates from January for the current report
     start_date, end_date = calculate_dates_continuous_from_january()
     
-    # Print the calculated start and end dates for debugging
+    # Debugging: Print the calculated start and end dates
     print(f"Calculated Start Date: {start_date}")
     print(f"Calculated End Date: {end_date}")
     
