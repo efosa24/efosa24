@@ -20,8 +20,8 @@ def calculate_dates_continuous_from_january():
         next_month_start_date = (end_date + timedelta(days=1)).replace(day=1)
         days_remaining_in_month = (next_month_start_date - end_date - timedelta(days=1)).days
 
-        # If there are remaining days <= 7, include them as a 5th week
-        if days_remaining_in_month <= 7 and days_remaining_in_month > 0:
+        # If there are exactly 7 remaining days, treat them as a 5th week
+        if days_remaining_in_month == 7:
             end_date += timedelta(days=days_remaining_in_month)
 
         # Adjust dates by subtracting 45 days
