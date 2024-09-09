@@ -20,7 +20,7 @@ def calculate_dates_continuous_from_january():
         next_month_start_date = (end_date + timedelta(days=1)).replace(day=1)
         days_remaining_in_month = (next_month_start_date - end_date - timedelta(days=1)).days
 
-        # If there are up to 7 remaining days, include them as a 5th week
+        # If there are up to 7 remaining days, treat them as a 5th week
         if days_remaining_in_month > 0 and days_remaining_in_month <= 7:
             end_date += timedelta(days=days_remaining_in_month)
 
@@ -72,4 +72,4 @@ def extract_data_for_current_report(df):
 extracted_data = extract_data_for_current_report(df)
 
 # Output the extracted data
-print(extracted_data)
+print(extracted_dataa)
