@@ -40,24 +40,26 @@ def calculate_dates():
 
     return periods
 
-def extract_filtered_data(df):
-    # Convert "Date Entered" to datetime if it's not already
-    df['Date Entered'] = pd.to_datetime(df['Date Entered'], errors='coerce')
-
-    # Get the calculated date periods
-    periods = calculate_dates()
-
+def extract_filtered_data(df_chunk, periods):
     # Use the last adjusted period for filtering
     adjusted_start, adjusted_end = periods[-2][2], periods[-2][3]
     
     # Filter data based on 'Date Entered' column in DataFrame
-    filtered_data = df[(df['Date Entered'] >= adjusted_start) & (df['Date Entered'] <= adjusted_end)]
+    filtered_data = df_chunk[(df_chunk['Date Entered'] >= adjusted_start) & (df_chunk['Date Entered'] <= adjusted_end)]
     
     return filtered_data
 
-# Example usage:
-# df = pd.read_csv('your_data.csv')  # Load your data here
+# Example usage with chunking to avoid memory issues:
+# Read the CSV in chunks
+chunksize = 10000  # Adjust this based on available memory
+file_path = 'your_data.csv'  # Provide the path to your CSV file
 
-# Extract data based on the calculated date range
-# filtered_data = extract_filtered_data(df)
-# print(filtered_data)
+periods = calculate_dates()
+
+for chunk in pd.read_csv(file_path, chunksize=chunksize, parse_dates=['Date Entered'], infer_datetime_format=True):
+    # Process each chunk and filter data based on the calculated periods
+    filtered_chunk = extract_filtered_data(chunk, periods)
+    
+    # Print or save the filtered chunk
+    print(filtered_chunk)
+    # If needed, you can append the results to a list or save to a file instead of printing
