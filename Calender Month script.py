@@ -1,75 +1,63 @@
 import pandas as pd
 from datetime import datetime, timedelta
 
-def calculate_dates_continuously_from_january():
-    # Get the current year and initialize from January 1st
+def calculate_dates():
+    # Get the current year and start from January 1st
     current_year = datetime.now().year
     start_date = datetime(current_year, 1, 1)
     
-    # List to store all the periods
+    # List to store the periods
     periods = []
 
-    # Continue calculating periods until the current date
     while True:
-        # Calculate the original end date as 28 days after the start date (4 weeks)
+        # Calculate the end date after 28 days (4 weeks)
         end_date = start_date + timedelta(days=27)
 
-        # Determine how many days are left in the month after the 28-day period
+        # Determine how many days are left in the month
         next_month_start = (end_date + timedelta(days=1)).replace(day=1)
         remaining_days_in_month = (next_month_start - end_date - timedelta(days=1)).days
 
-        # If there are exactly 7 days remaining, add them to make the month 5 weeks
+        # If exactly 7 days left, include them as the fifth week
         if remaining_days_in_month == 7:
             end_date += timedelta(days=7)
-        # If fewer than 7 days are left, carry those days over to the next month
+        # Otherwise, leave the extra days for the next month
         elif remaining_days_in_month < 7:
-            # The next period will start from this date
             end_date = next_month_start - timedelta(days=1)
 
         # Adjust start and end dates by subtracting 45 days
-        adjusted_start_date = start_date - timedelta(days=45)
-        adjusted_end_date = end_date - timedelta(days=45)
+        adjusted_start = start_date - timedelta(days=45)
+        adjusted_end = end_date - timedelta(days=45)
 
         # Store the original and adjusted periods
-        periods.append((start_date, end_date, adjusted_start_date, adjusted_end_date))
+        periods.append((start_date, end_date, adjusted_start, adjusted_end))
 
-        # Stop if the end date exceeds the current date
+        # Stop if the end date is beyond the current date
         if end_date >= datetime.now():
             break
 
-        # Move to the next period: start from the day after the current period's end
+        # Move to the next period (start after the current period's end date)
         start_date = end_date + timedelta(days=1)
 
     return periods
 
-def extract_data_based_on_dates(df):
-    # Convert "Date Entered" column to datetime if it's not already
+def extract_filtered_data(df):
+    # Convert "Date Entered" to datetime if it's not already
     df['Date Entered'] = pd.to_datetime(df['Date Entered'], errors='coerce')
-    
-    # Get the correct start and end date for the previous month
-    periods = calculate_dates_continuously_from_january()
 
-    # Extracting the last adjusted period (you can modify this to get a specific period)
+    # Get the calculated date periods
+    periods = calculate_dates()
+
+    # Use the last adjusted period for filtering
     adjusted_start, adjusted_end = periods[-2][2], periods[-2][3]
     
-    # Debugging: Print the adjusted start and end dates
-    print(f"Adjusted Start Date: {adjusted_start}")
-    print(f"Adjusted End Date: {adjusted_end}")
-    
-    # Filter data based on 'Date Entered' in your DataFrame (df)
+    # Filter data based on 'Date Entered' column in DataFrame
     filtered_data = df[(df['Date Entered'] >= adjusted_start) & (df['Date Entered'] <= adjusted_end)]
-
-    # Debugging: Print the number of rows filtered
-    print(f"Number of rows after filtering: {len(filtered_data)}")
-
+    
     return filtered_data
 
 # Example usage:
-# Assuming df is your DataFrame containing the 'Date Entered' column from GCC
 # df = pd.read_csv('your_data.csv')  # Load your data here
 
-# Extract data for the correct adjusted period
-# filtered_data = extract_data_based_on_dates(df)
-
-# Output the filtered data
+# Extract data based on the calculated date range
+# filtered_data = extract_filtered_data(df)
 # print(filtered_data)
