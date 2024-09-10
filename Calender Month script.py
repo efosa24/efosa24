@@ -18,10 +18,14 @@ def calculate_dates_continuously_from_january():
         next_month_start = (end_date + timedelta(days=1)).replace(day=1)
         remaining_days_in_month = (next_month_start - end_date - timedelta(days=1)).days
 
-        # If the remaining days are exactly 7, treat the month as having 5 weeks
+        # If there are exactly 7 days remaining, add them to make the month 5 weeks
         if remaining_days_in_month == 7:
-            end_date += timedelta(days=remaining_days_in_month)
-        
+            end_date += timedelta(days=7)
+        # If fewer than 7 days are left, carry those days over to the next month
+        elif remaining_days_in_month < 7:
+            # The next period will start from this date
+            end_date = next_month_start - timedelta(days=1)
+
         # Adjust start and end dates by subtracting 45 days
         adjusted_start_date = start_date - timedelta(days=45)
         adjusted_end_date = end_date - timedelta(days=45)
@@ -45,7 +49,7 @@ def extract_data_based_on_dates(df):
     # Get the correct start and end date for the previous month
     periods = calculate_dates_continuously_from_january()
 
-    # Extracting the last adjusted period
+    # Extracting the last adjusted period (you can modify this to get a specific period)
     adjusted_start, adjusted_end = periods[-2][2], periods[-2][3]
     
     # Debugging: Print the adjusted start and end dates
