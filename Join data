@@ -1,17 +1,31 @@
-# Assuming your datasets are named data1 and data2
+library(dplyr)
 
-# Step 1: Merge using PQMS number and complaint number
-merged1 <- merge(data1, data2, by = c("pqms_number", "complaint_number"), all = TRUE)
+# Function to join data using PQMS_number and tracking_number, then using contact_number if cat_desc is NA
+join_data_with_fallback <- function(data1, data2) {
+  
+  # Step 1: Perform the first join using PQMS_number and tracking_number
+  first_join <- data1 %>%
+    left_join(data2, by = c("PQMS_number" = "tracking_number"))
+  
+  # Step 2: Identify rows where cat_desc is NA after the first join
+  remaining_rows <- first_join %>%
+    filter(is.na(cat_desc))
+  
+  # Step 3: Perform the second join on contact_number for rows where cat_desc is NA
+  second_join <- remaining_rows %>%
+    left_join(data2, by = c("contact_number" = "contact_number"))
+  
+  # Step 4: Combine the successfully joined rows from the first join and the second join results
+  final_result <- bind_rows(
+    first_join %>% filter(!is.na(cat_desc)),  # Keep rows where the first join succeeded (cat_desc not NA)
+    second_join                               # Add rows from the second join
+  )
+  
+  return(final_result)
+}
 
-# Step 2: Find rows in data1 and data2 that were not matched in step 1
-unmatched1 <- subset(data1, !(pqms_number %in% merged1$pqms_number & complaint_number %in% merged1$complaint_number))
-unmatched2 <- subset(data2, !(pqms_number %in% merged1$pqms_number & complaint_number %in% merged1$complaint_number))
+# Example of how to use the function
+# final_data <- join_data_with_fallback(data1, data2)
 
-# Step 3: Merge remaining unmatched rows using score number and scorer number
-merged2 <- merge(unmatched1, unmatched2, by = c("score_number", "scorer_number"), all = TRUE)
-
-# Step 4: Concatenate the two merged datasets to ensure all rows are returned
-final_merged <- rbind(merged1, merged2)
-
-# View final merged dataset
-head(final_merged)
+# View the result
+# head(final_data)
