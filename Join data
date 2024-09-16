@@ -1,0 +1,17 @@
+# Assuming your datasets are named data1 and data2
+
+# Step 1: Merge using PQMS number and complaint number
+merged1 <- merge(data1, data2, by = c("pqms_number", "complaint_number"), all = TRUE)
+
+# Step 2: Find rows in data1 and data2 that were not matched in step 1
+unmatched1 <- subset(data1, !(pqms_number %in% merged1$pqms_number & complaint_number %in% merged1$complaint_number))
+unmatched2 <- subset(data2, !(pqms_number %in% merged1$pqms_number & complaint_number %in% merged1$complaint_number))
+
+# Step 3: Merge remaining unmatched rows using score number and scorer number
+merged2 <- merge(unmatched1, unmatched2, by = c("score_number", "scorer_number"), all = TRUE)
+
+# Step 4: Concatenate the two merged datasets to ensure all rows are returned
+final_merged <- rbind(merged1, merged2)
+
+# View final merged dataset
+head(final_merged)
