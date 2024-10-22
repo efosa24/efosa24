@@ -1,0 +1,96 @@
+import pandas as pd
+import numpy as np
+from openpyxl import Workbook
+from openpyxl.drawing.image import Image
+from openpyxl.utils.dataframe import dataframe_to_rows
+import matplotlib.pyplot as plt
+
+# Processed data function
+def processed_data1(data_list):
+    conditions = [
+        data_list['seriousness'].isin(['Adverse Event', 'AE Level 1', 'AE Level 2', 'AE Level 3', 'Serious AE']),
+        data_list['seriousness'].isin(['Non-Serious', 'Serious', 'Lack of Effect', 'Priority', 'Non-Priority']),
+        data_list['seriousness'] == 'Preference'
+    ]
+    choices = ['Adverse Event', 'PQC', 'Preference']
+    data_list['Enterprise'] = np.select(conditions, choices, default=np.nan)
+
+    # Filter based on 'Adverse Event' and 'reg_class'
+    data_list = data_list[~((data_list['Enterprise'] == 'Adverse Event') & 
+                            (~data_list['reg_class'].isin(['MEDICAL DEVICE', 'MEDICAL DEVICE II'])))]
+    return data_list
+
+# Function to filter and create pivot
+def filter_and_create_pivot(data_list):
+    # Define regions
+    regions = ["NA", "LATAM", "EMEA", "APAC"]
+    
+    # Filter data for each region and the required conditions
+    filtered_data = {region: data_list[(data_list['region'] == region) & 
+                                       (data_list['issue_status'] == "Open") & 
+                                       (data_list['issue_age'] > 45)]
+                     for region in regions}
+    
+    # Create workbook
+    wb = Workbook()
+    
+    # Add a worksheet for each region and write the filtered data
+    for region, df in filtered_data.items():
+        ws = wb.create_sheet(title=region)
+        for r in dataframe_to_rows(df, index=False, header=True):
+            ws.append(r)
+    
+    # Combine all filtered data for pivot table
+    combined_data = pd.concat(filtered_data.values(), keys=filtered_data.keys(), names=['region'])
+    
+    # Create age range column
+    combined_data['Age_Range'] = pd.cut(combined_data['issue_age'],
+                                        bins=[45, 75, 105, 364, float('inf')],
+                                        labels=['46-75 days', '76-105 days', '106-364 days', '365+ days'])
+    combined_data = combined_data.dropna(subset=['Age_Range'])
+    
+    # Calculate total complaints received for each region
+    total_complaints_per_region = data_list.groupby('region').size()
+    
+    # Create pivot table
+    pivot_table = (combined_data.groupby(['region', 'Age_Range'])
+                                .size()
+                                .unstack(fill_value=0))
+    
+    # Normalize by the total number of complaints received in each region
+    pivot_table = pivot_table.div(total_complaints_per_region, axis=0)
+    
+    # Add row sum for each region
+    pivot_table['Total'] = pivot_table.sum(axis=1)
+    
+    # Add total row at the bottom of the pivot table
+    total_row = pivot_table.sum(axis=0).to_frame().T
+    total_row.index = ['Total']
+    pivot_table = pd.concat([pivot_table, total_row])
+    
+    # Save pivot table to workbook
+    ws_pivot = wb.create_sheet(title="Pivot Table")
+    for r in dataframe_to_rows(pivot_table.reset_index(), index=False, header=True):
+        ws_pivot.append(r)
+    
+    # Create bar chart
+    bar_chart_data = combined_data.groupby(['Age_Range', 'region']).size().unstack(fill_value=0)
+    bar_chart_data.plot(kind='bar', stacked=False)
+    plt.title('Number of Cases by Age Range and Region (Normalized)')
+    plt.xlabel('Age Range')
+    plt.ylabel('Proportion of Open Cases')
+    
+    # Save bar chart as image
+    bar_chart_file = "bar_chart.png"
+    plt.savefig(bar_chart_file, bbox_inches='tight')
+    
+    # Add bar chart to workbook
+    ws_chart = wb.create_sheet(title="Bar Chart")
+    img = Image(bar_chart_file)
+    ws_chart.add_image(img, 'A1')
+    
+    # Save workbook
+    wb.save("Open_cases_and_pivot.xlsx")
+
+# Run the filter and pivot creation
+filter_and_create_pivot(data_list)
