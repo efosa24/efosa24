@@ -19,8 +19,8 @@ import sqlite3
 """
 Load the data from safety and skip the first row
 """
-df = pd.read_csv("C:/Users/FEriam01/OneDrive - Kenvue/Documents/Safety Project/October 2024/Daily/Data 10-08-2024.csv", skiprows= 1)
-#df =pd.read_csv("‪‪‪C:/Users/FEriam01/OneDrive - Kenvue/Documents/Safety Project/Data 06-06-2024-02.csv", skiprows= 1)
+df = pd.read_csv("C:/Users/FEriam01/OneDrive - /Documents/Safety Project/October 2024/Daily/Data 10-08-2024.csv", skiprows= 1)
+#df =pd.read_csv("‪‪‪C:/Users/FEriam01/OneDrive - /Documents/Safety Project/Data 06-06-2024-02.csv", skiprows= 1)
 """
 make the second row the header
 """
@@ -41,11 +41,11 @@ Remove duplicates
 """
 Load data from PQMS
 """
-df_pqms = pd.read_csv("C:/Users/FEriam01/OneDrive - Kenvue/Documents/Safety Project/PQMS Data 2012 -2018.csv")
+df_pqms = pd.read_csv("C:/Users/FEriam01/OneDrive - /Documents/Safety Project/PQMS Data 2012 -2018.csv")
 
-df_pqms1 = pd.read_csv("C:/Users/FEriam01/OneDrive - Kenvue/Documents/Safety Project/PQMS Data 2019 - April 2023.csv")
+df_pqms1 = pd.read_csv("C:/Users/FEriam01/OneDrive - /Documents/Safety Project/PQMS Data 2019 - April 2023.csv")
 
-df_pqms2 = pd.read_csv("C:/Users/FEriam01/OneDrive - Kenvue/Documents/Safety Project/October 2024/Daily/PQMS Data May1 to Oct 8.csv")
+df_pqms2 = pd.read_csv("C:/Users/FEriam01/OneDrive - /Documents/Safety Project/October 2024/Daily/PQMS Data May1 to Oct 8.csv")
 
 combined_df = pd.concat([df_pqms, df_pqms1, df_pqms2], ignore_index= True)
 
@@ -176,7 +176,7 @@ df_sorted2["Comments"] = ''
 """
 Load file in excel form
 """
-df_sorted2.to_excel("C:/Users/FEriam01/OneDrive - Kenvue/Documents/Safety Project/October 2024/Daily/Safety_file_October_08_202444.xlsx",
+df_sorted2.to_excel("C:/Users/FEriam01/OneDrive - /Documents/Safety Project/October 2024/Daily/Safety_file_October_08_202444.xlsx",
                    index= False)        
 """
 To send report
@@ -206,9 +206,9 @@ def generate_report():
 """
 Configuration
 """
-sender_email = "feriam01@kenvue.com"
+sender_email = "feriam01@k......com"
 sender_password = " "
-reciever_email = "feriam01@kenvue.com "
+reciever_email = "feriam01@.....com "
 subject = "Monthly report"
 message = "Hi Diana, \n\nPlease find attached monthly report.\n\nBest Regards,\nFestus"   
     
