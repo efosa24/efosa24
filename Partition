@@ -1,0 +1,52 @@
+# Install and load required libraries
+install.packages(c("tm", "wordcloud", "dplyr", "ggplot2"))
+library(tm)
+library(wordcloud)
+library(dplyr)
+library(ggplot2)
+
+# Step 1: Load the Complaint Data
+# Replace 'your_file.csv' with your actual file path
+data <- read.csv("your_file.csv")
+
+# Assuming data has columns `product_name` and `complaint_text`
+# Step 2: Identify the Top 5 Products by Number of Complaints
+top_products <- data %>%
+  count(product_name, sort = TRUE) %>%
+  top_n(5, n) %>%
+  pull(product_name)
+
+# Step 3: Create Word Clouds for Each of the Top 5 Products
+# Loop through each top product and generate a word cloud
+
+for (product in top_products) {
+  # Filter complaints for the current product
+  product_data <- data %>% filter(product_name == product)
+  
+  # Create a corpus from the complaint text of this product
+  product_corpus <- Corpus(VectorSource(product_data$complaint_text))
+  
+  # Clean the text: Convert to lower case, remove punctuation, stop words, numbers, and extra whitespace
+  product_corpus <- product_corpus %>%
+    tm_map(content_transformer(tolower)) %>%
+    tm_map(removePunctuation) %>%
+    tm_map(removeNumbers) %>%
+    tm_map(removeWords, stopwords("en")) %>%
+    tm_map(stripWhitespace)
+  
+  # Create a Document-Term Matrix (DTM)
+  dtm <- DocumentTermMatrix(product_corpus)
+  
+  # Calculate word frequencies
+  word_freq <- as.matrix(dtm)
+  word_freq <- sort(colSums(word_freq), decreasing = TRUE)
+  word_freq_df <- data.frame(word = names(word_freq), freq = word_freq)
+  
+  # Generate the word cloud for this product
+  set.seed(123) # For reproducibility
+  wordcloud(words = word_freq_df$word, freq = word_freq_df$freq, min.freq = 2,
+            max.words = 100, random.order = FALSE, colors = brewer.pal(8, "Dark2"))
+  
+  # Add title to the word cloud plot
+  title(main = paste("Word Cloud for", product))
+}
