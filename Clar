@@ -1,0 +1,5 @@
+•	Support the data analytics team on data discovery in CDL and data ingestions from the sources system in CDL (data lake)
+•	Work in partnership with system owners to understand the process and the data input in the data source.
+•	Lead the data foundation strategy in CDL (data lake) to guarantee the data availability and curation for the key quality data and additional data needed to support the data analytics strategy.
+•	Develop methods of analysis of data to support global metrics, trends analysis and risk management planning using innovative data science methodology.
+•	Lead various projects within the department and communicate effectively with all levels of management. This role will analyze data and perform periodic complaint trend analysis.
