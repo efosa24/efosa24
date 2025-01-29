@@ -9,13 +9,13 @@ join_data <- function(data1, data2) {
   # Check for rows that did not match (i.e., NA in any column from data2)
   unmatched_rows <- is.na(joined_data$concat)  # Check if "concat" is NA in the joined data
   
-  # If there are unmatched rows, join again using "concat1" from data2
+  # If there are unmatched rows, join again using "concat1" from data1 and "concat" from data2
   if (any(unmatched_rows)) {
     # Filter out the unmatched rows from data1
     unmatched_data1 <- data1[unmatched_rows, ]
     
-    # Perform the left join on "concat1" in data2
-    additional_join <- left_join(unmatched_data1, data2, by = "concat1")
+    # Perform the left join on "concat1" in data1 and "concat" in data2
+    additional_join <- left_join(unmatched_data1, data2, by = c("concat1" = "concat"))
     
     # Replace the unmatched rows in the initial joined data with the new join
     joined_data[unmatched_rows, ] <- additional_join
@@ -25,6 +25,6 @@ join_data <- function(data1, data2) {
 }
 
 # Example usage:
-# data1 <- data.frame(concat = c("A", "B", "C"), value = c(1, 2, 3))
-# data2 <- data.frame(concat = c("B", "D"), concat1 = c("C", "B"), value2 = c(10, 20))
+# data1 <- data.frame(concat = c("A", "B", "C"), concat1 = c("X", "Y", "Z"), value = c(1, 2, 3))
+# data2 <- data.frame(concat = c("B", "C"), value2 = c(10, 20))
 # result <- join_data(data1, data2)
