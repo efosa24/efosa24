@@ -1,0 +1,30 @@
+library(dplyr)
+
+# Define the function to join the datasets
+join_data <- function(data1, data2) {
+  
+  # First, try to left join using the "concat" field
+  joined_data <- left_join(data1, data2, by = "concat")
+  
+  # Check for rows that did not match (i.e., NA in any column from data2)
+  unmatched_rows <- is.na(joined_data$concat)  # Check if "concat" is NA in the joined data
+  
+  # If there are unmatched rows, join again using "concat1" from data2
+  if (any(unmatched_rows)) {
+    # Filter out the unmatched rows from data1
+    unmatched_data1 <- data1[unmatched_rows, ]
+    
+    # Perform the left join on "concat1" in data2
+    additional_join <- left_join(unmatched_data1, data2, by = "concat1")
+    
+    # Replace the unmatched rows in the initial joined data with the new join
+    joined_data[unmatched_rows, ] <- additional_join
+  }
+  
+  return(joined_data)
+}
+
+# Example usage:
+# data1 <- data.frame(concat = c("A", "B", "C"), value = c(1, 2, 3))
+# data2 <- data.frame(concat = c("B", "D"), concat1 = c("C", "B"), value2 = c(10, 20))
+# result <- join_data(data1, data2)
