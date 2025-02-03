@@ -1,30 +1,88 @@
-library(dplyr)
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+from sklearn.preprocessing import LabelEncoder, MinMaxScaler
+import xgboost as xgb
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense, Dropout
 
-# Define the function to join the datasets
-join_data <- function(data1, data2) {
-  
-  # First, try to left join using the "concat" field
-  joined_data <- left_join(data1, data2, by = "concat")
-  
-  # Check for rows that did not match (i.e., NA in any column from data2)
-  unmatched_rows <- is.na(joined_data$concat)  # Check if "concat" is NA in the joined data
-  
-  # If there are unmatched rows, join again using "concat1" from data1 and "concat" from data2
-  if (any(unmatched_rows)) {
-    # Filter out the unmatched rows from data1
-    unmatched_data1 <- data1[unmatched_rows, ]
-    
-    # Perform the left join on "concat1" in data1 and "concat" in data2
-    additional_join <- left_join(unmatched_data1, data2, by = c("concat1" = "concat"))
-    
-    # Replace the unmatched rows in the initial joined data with the new join
-    joined_data[unmatched_rows, ] <- additional_join
-  }
-  
-  return(joined_data)
-}
+# Load dataset
+df = pd.read_csv("jj_complaints.csv")
 
-# Example usage:
-# data1 <- data.frame(concat = c("A", "B", "C"), concat1 = c("X", "Y", "Z"), value = c(1, 2, 3))
-# data2 <- data.frame(concat = c("B", "C"), value2 = c(10, 20))
-# result <- join_data(data1, data2)
+# Convert 'Date' to datetime
+df['Date'] = pd.to_datetime(df['Date'])
+
+# Aggregate complaints by month
+df['YearMonth'] = df['Date'].dt.to_period('M')
+monthly_complaints = df.groupby('YearMonth').size().reset_index(name='Complaint_Volume')
+monthly_complaints['YearMonth'] = monthly_complaints['YearMonth'].astype(str)
+monthly_complaints['YearMonth'] = pd.to_datetime(monthly_complaints['YearMonth'])
+
+# Apply Sentiment Analysis
+analyzer = SentimentIntensityAnalyzer()
+df['Sentiment_Score'] = df['Complaint_Text'].apply(lambda x: analyzer.polarity_scores(str(x))['compound'])
+monthly_sentiment = df.groupby('YearMonth')['Sentiment_Score'].mean().reset_index()
+
+# Aggregate marketing spend by month
+monthly_marketing = df.groupby('YearMonth')['Marketing_Spend'].sum().reset_index()
+
+# Merge Data
+data = monthly_complaints.merge(monthly_sentiment, on='YearMonth').merge(monthly_marketing, on='YearMonth')
+
+# Create Lag Features
+for lag in [1, 2, 3]:
+    data[f'Lag_{lag}'] = data['Complaint_Volume'].shift(lag)
+
+# Rolling Averages
+data['Rolling_3M'] = data['Complaint_Volume'].rolling(window=3).mean()
+data['Rolling_6M'] = data['Complaint_Volume'].rolling(window=6).mean()
+
+# Drop NaN values caused by shifting
+data = data.dropna()
+
+# Normalize Data
+scaler = MinMaxScaler()
+data_scaled = scaler.fit_transform(data.drop(columns=['YearMonth']))
+
+# Split into Train & Test
+train_size = int(len(data) * 0.8)
+train, test = data_scaled[:train_size], data_scaled[train_size:]
+
+X_train, y_train = train[:, 1:], train[:, 0]  # Features & Target
+X_test, y_test = test[:, 1:], test[:, 0]
+
+# -------------------- XGBoost Model --------------------
+xgb_model = xgb.XGBRegressor(n_estimators=100, learning_rate=0.1, objective='reg:squarederror')
+xgb_model.fit(X_train, y_train)
+
+# Predict with XGBoost
+xgb_preds = xgb_model.predict(X_test)
+
+# -------------------- LSTM Model --------------------
+X_train_lstm, X_test_lstm = X_train.reshape((-1, X_train.shape[1], 1)), X_test.reshape((-1, X_test.shape[1], 1))
+
+lstm_model = Sequential([
+    LSTM(50, activation='relu', return_sequences=True, input_shape=(X_train.shape[1], 1)),
+    Dropout(0.2),
+    LSTM(50, activation='relu'),
+    Dropout(0.2),
+    Dense(1)
+])
+
+lstm_model.compile(optimizer='adam', loss='mse')
+lstm_model.fit(X_train_lstm, y_train, epochs=50, batch_size=8, verbose=1)
+
+# Predict with LSTM
+lstm_preds = lstm_model.predict(X_test_lstm)
+
+# -------------------- Compare Results --------------------
+plt.figure(figsize=(12, 5))
+plt.plot(data['YearMonth'][train_size:], y_test, label='Actual Complaints', color='black')
+plt.plot(data['YearMonth'][train_size:], xgb_preds, label='XGBoost Prediction', color='blue')
+plt.plot(data['YearMonth'][train_size:], lstm_preds, label='LSTM Prediction', color='red')
+plt.legend()
+plt.title('Complaint Volume Prediction')
+plt.show()
