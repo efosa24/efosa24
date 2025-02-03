@@ -3,7 +3,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-from sklearn.preprocessing import LabelEncoder, MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics import mean_squared_error
+from prophet import Prophet
 import xgboost as xgb
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
@@ -29,60 +31,99 @@ monthly_sentiment = df.groupby('YearMonth')['Sentiment_Score'].mean().reset_inde
 # Aggregate marketing spend by month
 monthly_marketing = df.groupby('YearMonth')['Marketing_Spend'].sum().reset_index()
 
-# Merge Data
-data = monthly_complaints.merge(monthly_sentiment, on='YearMonth').merge(monthly_marketing, on='YearMonth')
+# Merge all data
+data = monthly_complaints.merge(monthly_sentiment, on='YearMonth', how='left')
+data = data.merge(monthly_marketing, on='YearMonth', how='left')
 
-# Create Lag Features
-for lag in [1, 2, 3]:
-    data[f'Lag_{lag}'] = data['Complaint_Volume'].shift(lag)
+# Fill missing values
+data.fillna(0, inplace=True)
+
+# Create lag features (last 3 months of complaint volume)
+data['Lag_1'] = data['Complaint_Volume'].shift(1)
+data['Lag_2'] = data['Complaint_Volume'].shift(2)
+data['Lag_3'] = data['Complaint_Volume'].shift(3)
 
 # Rolling Averages
-data['Rolling_3M'] = data['Complaint_Volume'].rolling(window=3).mean()
-data['Rolling_6M'] = data['Complaint_Volume'].rolling(window=6).mean()
+data['Rolling_3'] = data['Complaint_Volume'].rolling(3).mean()
+data['Rolling_6'] = data['Complaint_Volume'].rolling(6).mean()
 
-# Drop NaN values caused by shifting
-data = data.dropna()
+# Drop first few rows with NaN due to lag features
+data.dropna(inplace=True)
 
-# Normalize Data
+# Normalize Features
 scaler = MinMaxScaler()
-data_scaled = scaler.fit_transform(data.drop(columns=['YearMonth']))
+scaled_features = scaler.fit_transform(data[['Complaint_Volume', 'Sentiment_Score', 'Marketing_Spend', 'Lag_1', 'Lag_2', 'Lag_3', 'Rolling_3', 'Rolling_6']])
+data_scaled = pd.DataFrame(scaled_features, columns=['Complaint_Volume', 'Sentiment_Score', 'Marketing_Spend', 'Lag_1', 'Lag_2', 'Lag_3', 'Rolling_3', 'Rolling_6'])
+data_scaled['YearMonth'] = data['YearMonth']
 
-# Split into Train & Test
-train_size = int(len(data) * 0.8)
-train, test = data_scaled[:train_size], data_scaled[train_size:]
+# Train-Test Split (80% Train, 20% Test)
+train_size = int(len(data_scaled) * 0.8)
+train, test = data_scaled.iloc[:train_size], data_scaled.iloc[train_size:]
 
-X_train, y_train = train[:, 1:], train[:, 0]  # Features & Target
-X_test, y_test = test[:, 1:], test[:, 0]
+# Prepare Data for Prophet
+prophet_data = data[['YearMonth', 'Complaint_Volume']].rename(columns={'YearMonth': 'ds', 'Complaint_Volume': 'y'})
 
-# -------------------- XGBoost Model --------------------
-xgb_model = xgb.XGBRegressor(n_estimators=100, learning_rate=0.1, objective='reg:squarederror')
+# Prophet Model
+prophet = Prophet()
+prophet.fit(prophet_data)
+
+future = prophet.make_future_dataframe(periods=len(test), freq='M')
+forecast_prophet = prophet.predict(future)
+forecast_prophet = forecast_prophet[['ds', 'yhat']].tail(len(test))
+
+# RMSE for Prophet
+rmse_prophet = np.sqrt(mean_squared_error(test['Complaint_Volume'].values, forecast_prophet['yhat'].values))
+
+# Prepare Data for XGBoost
+X_train, y_train = train.drop(['Complaint_Volume', 'YearMonth'], axis=1), train['Complaint_Volume']
+X_test, y_test = test.drop(['Complaint_Volume', 'YearMonth'], axis=1), test['Complaint_Volume']
+
+# XGBoost Model
+xgb_model = xgb.XGBRegressor(objective='reg:squarederror', n_estimators=100)
 xgb_model.fit(X_train, y_train)
+xgb_pred = xgb_model.predict(X_test)
 
-# Predict with XGBoost
-xgb_preds = xgb_model.predict(X_test)
+# RMSE for XGBoost
+rmse_xgb = np.sqrt(mean_squared_error(y_test, xgb_pred))
 
-# -------------------- LSTM Model --------------------
-X_train_lstm, X_test_lstm = X_train.reshape((-1, X_train.shape[1], 1)), X_test.reshape((-1, X_test.shape[1], 1))
+# Prepare Data for LSTM
+X_train_lstm = np.array(X_train).reshape(X_train.shape[0], X_train.shape[1], 1)
+X_test_lstm = np.array(X_test).reshape(X_test.shape[0], X_test.shape[1], 1)
 
-lstm_model = Sequential([
-    LSTM(50, activation='relu', return_sequences=True, input_shape=(X_train.shape[1], 1)),
+# LSTM Model
+model = Sequential([
+    LSTM(50, activation='relu', return_sequences=True, input_shape=(X_train_lstm.shape[1], 1)),
     Dropout(0.2),
     LSTM(50, activation='relu'),
     Dropout(0.2),
     Dense(1)
 ])
 
-lstm_model.compile(optimizer='adam', loss='mse')
-lstm_model.fit(X_train_lstm, y_train, epochs=50, batch_size=8, verbose=1)
+model.compile(optimizer='adam', loss='mse')
+model.fit(X_train_lstm, y_train, epochs=20, batch_size=8, verbose=0)
 
-# Predict with LSTM
-lstm_preds = lstm_model.predict(X_test_lstm)
+# Predictions
+lstm_pred = model.predict(X_test_lstm).flatten()
 
-# -------------------- Compare Results --------------------
-plt.figure(figsize=(12, 5))
-plt.plot(data['YearMonth'][train_size:], y_test, label='Actual Complaints', color='black')
-plt.plot(data['YearMonth'][train_size:], xgb_preds, label='XGBoost Prediction', color='blue')
-plt.plot(data['YearMonth'][train_size:], lstm_preds, label='LSTM Prediction', color='red')
+# RMSE for LSTM
+rmse_lstm = np.sqrt(mean_squared_error(y_test, lstm_pred))
+
+# Model Selection
+rmse_scores = {'Prophet': rmse_prophet, 'XGBoost': rmse_xgb, 'LSTM': rmse_lstm}
+best_model = min(rmse_scores, key=rmse_scores.get)
+
+print(f"RMSE Scores: {rmse_scores}")
+print(f"Best Model: {best_model}")
+
+# Plot results
+plt.figure(figsize=(10, 5))
+plt.plot(test['YearMonth'], y_test, label='Actual', color='black')
+plt.plot(test['YearMonth'], forecast_prophet['yhat'], label='Prophet', linestyle='dashed')
+plt.plot(test['YearMonth'], xgb_pred, label='XGBoost', linestyle='dotted')
+plt.plot(test['YearMonth'], lstm_pred, label='LSTM', linestyle='dashdot')
 plt.legend()
-plt.title('Complaint Volume Prediction')
+plt.xlabel('Date')
+plt.ylabel('Complaint Volume')
+plt.title('Model Predictions vs Actual Complaint Volume')
+plt.xticks(rotation=45)
 plt.show()
