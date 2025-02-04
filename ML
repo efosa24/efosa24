@@ -1,0 +1,125 @@
+# Load Required Libraries
+library(dplyr)
+library(lubridate)
+library(tidyverse)
+library(vader)
+library(prophet)
+library(xgboost)
+library(caret)
+library(keras)
+
+# Load dataset
+df <- read.csv("jj_complaints.csv", stringsAsFactors = FALSE)
+
+# Convert 'Date' to Date type
+df$Date <- as.Date(df$Date, format="%Y-%m-%d")
+
+# Aggregate complaints by month
+df$YearMonth <- format(df$Date, "%Y-%m")
+monthly_complaints <- df %>%
+  group_by(YearMonth) %>%
+  summarise(Complaint_Volume = n())
+
+# Convert YearMonth to Date format
+monthly_complaints$YearMonth <- as.Date(paste0(monthly_complaints$YearMonth, "-01"))
+
+# Apply Sentiment Analysis using VADER
+df$Sentiment_Score <- vader_df(df$Complaint_Text)$compound
+monthly_sentiment <- df %>%
+  group_by(YearMonth) %>%
+  summarise(Sentiment_Score = mean(Sentiment_Score, na.rm = TRUE))
+
+# Aggregate Marketing Spend by month
+monthly_marketing <- df %>%
+  group_by(YearMonth) %>%
+  summarise(Marketing_Spend = sum(Marketing_Spend, na.rm = TRUE))
+
+# Merge all data
+data <- monthly_complaints %>%
+  left_join(monthly_sentiment, by = "YearMonth") %>%
+  left_join(monthly_marketing, by = "YearMonth")
+
+# Fill missing values with 0
+data[is.na(data)] <- 0
+
+# Create lag features (last 3 months of complaint volume)
+data <- data %>%
+  arrange(YearMonth) %>%
+  mutate(Lag_1 = lag(Complaint_Volume, 1),
+         Lag_2 = lag(Complaint_Volume, 2),
+         Lag_3 = lag(Complaint_Volume, 3))
+
+# Rolling Averages
+data <- data %>%
+  mutate(Rolling_3 = zoo::rollmean(Complaint_Volume, 3, fill = NA, align = "right"),
+         Rolling_6 = zoo::rollmean(Complaint_Volume, 6, fill = NA, align = "right"))
+
+# Drop first few rows with NaN due to lag features
+data <- na.omit(data)
+
+# Normalize Features using Min-Max Scaling
+normalize <- function(x) {(x - min(x, na.rm = TRUE)) / (max(x, na.rm = TRUE) - min(x, na.rm = TRUE))}
+data <- data %>%
+  mutate(across(c(Complaint_Volume, Sentiment_Score, Marketing_Spend, Lag_1, Lag_2, Lag_3, Rolling_3, Rolling_6), normalize))
+
+# Prophet Model
+prophet_df <- data %>%
+  select(YearMonth, Complaint_Volume) %>%
+  rename(ds = YearMonth, y = Complaint_Volume)
+
+model_prophet <- prophet()
+model_prophet <- add_seasonality(model_prophet, name="monthly", period=30.5, fourier.order=5)
+model_prophet <- fit.prophet(model_prophet, prophet_df)
+
+future <- make_future_dataframe(model_prophet, periods = 12, freq = "month")
+forecast <- predict(model_prophet, future)
+
+# Plot Prophet Forecast
+plot(model_prophet, forecast)
+
+# XGBoost Model
+set.seed(42)
+train_index <- createDataPartition(data$Complaint_Volume, p = 0.8, list = FALSE)
+train_data <- data[train_index,]
+test_data <- data[-train_index,]
+
+dtrain <- xgb.DMatrix(data = as.matrix(train_data %>% select(-YearMonth, -Complaint_Volume)), label = train_data$Complaint_Volume)
+dtest <- xgb.DMatrix(data = as.matrix(test_data %>% select(-YearMonth, -Complaint_Volume)), label = test_data$Complaint_Volume)
+
+params <- list(objective = "reg:squarederror", eta = 0.1, max_depth = 6, subsample = 0.8)
+xgb_model <- xgb.train(params, dtrain, nrounds = 100, watchlist = list(train = dtrain, test = dtest), verbose = 1)
+
+# Predictions
+xgb_pred <- predict(xgb_model, dtest)
+rmse_xgb <- sqrt(mean((xgb_pred - test_data$Complaint_Volume)^2))
+print(paste("XGBoost RMSE:", rmse_xgb))
+
+# LSTM Model
+data_matrix <- as.matrix(data %>% select(-YearMonth))
+dim(data_matrix) <- c(nrow(data_matrix), ncol(data_matrix), 1)
+
+train_x <- data_matrix[train_index,,]
+train_y <- data$Complaint_Volume[train_index]
+test_x <- data_matrix[-train_index,,]
+test_y <- data$Complaint_Volume[-train_index]
+
+model_lstm <- keras_model_sequential() %>%
+  layer_lstm(units = 50, return_sequences = TRUE, input_shape = c(ncol(train_x), 1)) %>%
+  layer_lstm(units = 50, return_sequences = FALSE) %>%
+  layer_dense(units = 25, activation = "relu") %>%
+  layer_dense(units = 1)
+
+model_lstm %>% compile(loss = "mse", optimizer = optimizer_adam())
+
+history <- model_lstm %>% fit(train_x, train_y, epochs = 50, batch_size = 16, validation_data = list(test_x, test_y))
+
+# Predictions
+lstm_pred <- model_lstm %>% predict(test_x)
+rmse_lstm <- sqrt(mean((lstm_pred - test_y)^2))
+print(paste("LSTM RMSE:", rmse_lstm))
+
+# Model Selection
+rmse_values <- data.frame(Model = c("Prophet", "XGBoost", "LSTM"), RMSE = c(mean(abs(forecast$yhat - data$Complaint_Volume)), rmse_xgb, rmse_lstm))
+best_model <- rmse_values[which.min(rmse_values$RMSE),]
+
+print(paste("Best Model:", best_model$Model, "with RMSE:", best_model$RMSE))
