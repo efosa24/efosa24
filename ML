@@ -2,20 +2,20 @@
 library(dplyr)
 library(lubridate)
 library(tidyverse)
-library(vader)
 library(prophet)
 library(xgboost)
 library(caret)
 library(keras)
 library(tensorflow)
 library(zoo)
+library(ggplot2)
 library(Metrics)  # For RMSE calculation
 
 # Load dataset
 df <- read.csv("jj_complaints.csv", stringsAsFactors = FALSE)
 
 # Convert 'Date' to Date type
-df$Date <- mdy_hm(df$Date)  # Adjusts for "12/30/2024 25:5" format
+df$Date <- mdy_hm(df$Date)  # Adjust for format like "12/30/2024 25:5"
 
 # Aggregate complaints by month
 df$YearMonth <- floor_date(df$Date, "month")
@@ -24,17 +24,8 @@ monthly_complaints <- df %>%
   group_by(YearMonth) %>%
   summarise(Complaint_Volume = n(), .groups = 'drop')
 
-# Apply Sentiment Analysis using VADER
-df$Sentiment_Score <- vader_df(df$Complaint_Text)$compound
-monthly_sentiment <- df %>%
-  group_by(YearMonth) %>%
-  summarise(Sentiment_Score = mean(Sentiment_Score, na.rm = TRUE), .groups = 'drop')
-
-# Merge complaints and sentiment data
-data <- monthly_complaints %>%
-  left_join(monthly_sentiment, by = "YearMonth")
-
 # Fill missing values with 0
+data <- monthly_complaints
 data[is.na(data)] <- 0
 
 # Create lag features (last 3 months of complaint volume)
@@ -49,85 +40,100 @@ data <- data %>%
   mutate(Rolling_3 = zoo::rollmean(Complaint_Volume, 3, fill = NA, align = "right"),
          Rolling_6 = zoo::rollmean(Complaint_Volume, 6, fill = NA, align = "right"))
 
-# Drop initial rows with NA due to lag/rolling calculations
+# Drop first few rows with NaN due to lag features
 data <- na.omit(data)
 
-# Split into train and test (80% train, 20% test)
-split_idx <- round(nrow(data) * 0.8)
-train <- data[1:split_idx, ]
-test <- data[(split_idx + 1):nrow(data), ]
+# 📌 Train-Test Split
+train_size <- floor(0.8 * nrow(data))
+train <- data[1:train_size, ]
+test <- data[(train_size + 1):nrow(data), ]
 
-### ----- 1. Prophet Model -----
-prophet_data <- train %>%
-  select(ds = YearMonth, y = Complaint_Volume)
+# ---------------------------------------------------------------
+# ✅ PROPHET MODEL
+# ---------------------------------------------------------------
+prophet_data <- data %>%
+  select(YearMonth, Complaint_Volume) %>%
+  rename(ds = YearMonth, y = Complaint_Volume)
 
-prophet_model <- prophet()
-prophet_model <- add_regressor(prophet_model, "Sentiment_Score")
-prophet_model <- fit.prophet(prophet_model, prophet_data)
+m <- prophet(prophet_data)
+future <- make_future_dataframe(m, periods = 12, freq = "month")  # Predict 12 months ahead
+forecast <- predict(m, future)
 
-future <- make_future_dataframe(prophet_model, periods = nrow(test), freq = "month")
-future$Sentiment_Score <- test$Sentiment_Score
-prophet_forecast <- predict(prophet_model, future)
-prophet_pred <- tail(prophet_forecast$yhat, nrow(test))
+# 📌 Plot Prophet Predictions
+ggplot() +
+  geom_line(data = prophet_data, aes(x = ds, y = y), color = "blue") +
+  geom_line(data = forecast, aes(x = ds, y = yhat), color = "red") +
+  labs(title = "Prophet Forecast vs Actual", x = "Date", y = "Complaint Volume")
 
-# Calculate RMSE for Prophet
-prophet_rmse <- rmse(test$Complaint_Volume, prophet_pred)
+# ---------------------------------------------------------------
+# ✅ XGBOOST MODEL
+# ---------------------------------------------------------------
+x_train <- as.matrix(train %>% select(-YearMonth, -Complaint_Volume))
+y_train <- train$Complaint_Volume
 
-### ----- 2. XGBoost Model -----
-xgb_train <- train %>% select(-YearMonth)
-xgb_test <- test %>% select(-YearMonth)
+x_test <- as.matrix(test %>% select(-YearMonth, -Complaint_Volume))
+y_test <- test$Complaint_Volume
 
-xgb_model <- xgboost(
-  data = as.matrix(xgb_train %>% select(-Complaint_Volume)),
-  label = xgb_train$Complaint_Volume,
-  nrounds = 100,
-  objective = "reg:squarederror",
-  verbose = 0
-)
+xgb_model <- xgboost(data = x_train, label = y_train, nrounds = 100, objective = "reg:squarederror", verbose = 0)
 
-xgb_pred <- predict(xgb_model, as.matrix(xgb_test %>% select(-Complaint_Volume)))
+# Predict using XGBoost
+xgb_pred <- predict(xgb_model, x_test)
 
-# Calculate RMSE for XGBoost
-xgb_rmse <- rmse(test$Complaint_Volume, xgb_pred)
+# 📌 Plot XGBoost Predictions
+ggplot() +
+  geom_line(data = test, aes(x = YearMonth, y = Complaint_Volume), color = "blue") +
+  geom_line(data = test, aes(x = YearMonth, y = xgb_pred), color = "red") +
+  labs(title = "XGBoost Forecast vs Actual", x = "Date", y = "Complaint Volume")
 
-### ----- 3. LSTM Model -----
-# Normalize data
-normalize <- function(x) {(x - min(x)) / (max(x) - min(x))}
-train_norm <- as.data.frame(lapply(train[-1], normalize))
-test_norm <- as.data.frame(lapply(test[-1], normalize))
+# ---------------------------------------------------------------
+# ✅ LSTM MODEL
+# ---------------------------------------------------------------
+# Normalize Data
+scaler <- preProcess(train %>% select(-YearMonth), method = "range")
+train_scaled <- predict(scaler, train %>% select(-YearMonth))
+test_scaled <- predict(scaler, test %>% select(-YearMonth))
 
-# Convert to array for LSTM
-train_x <- array(train_norm %>% select(-Complaint_Volume), dim = c(nrow(train_norm), ncol(train_norm), 1))
-train_y <- train_norm$Complaint_Volume
-test_x <- array(test_norm %>% select(-Complaint_Volume), dim = c(nrow(test_norm), ncol(test_norm), 1))
+# Reshape Data for LSTM (3D Tensor)
+X_train <- array(train_scaled[, -1], dim = c(nrow(train_scaled), ncol(train_scaled) - 1, 1))
+y_train <- train_scaled[, 1]
 
-# Build LSTM Model
-lstm_model <- keras_model_sequential() %>%
-  layer_lstm(units = 50, input_shape = c(ncol(train_norm), 1)) %>%
+X_test <- array(test_scaled[, -1], dim = c(nrow(test_scaled), ncol(test_scaled) - 1, 1))
+y_test <- test_scaled[, 1]
+
+# Define LSTM Model
+model <- keras_model_sequential() %>%
+  layer_lstm(units = 50, return_sequences = TRUE, input_shape = c(dim(X_train)[2], 1)) %>%
+  layer_lstm(units = 50) %>%
   layer_dense(units = 1)
 
-lstm_model %>% compile(loss = "mse", optimizer = "adam")
+# Compile and Train Model
+model %>% compile(loss = 'mean_squared_error', optimizer = 'adam')
+model %>% fit(X_train, y_train, epochs = 50, batch_size = 1, verbose = 0)
 
-# Train LSTM
-lstm_model %>% fit(train_x, train_y, epochs = 50, batch_size = 1, verbose = 0)
+# Predict using LSTM
+lstm_pred <- model %>% predict(X_test)
+lstm_pred <- predict(scaler, data.frame(Complaint_Volume = lstm_pred))  # Inverse scaling
 
-# Make predictions
-lstm_pred <- lstm_model %>% predict(test_x)
+# 📌 Plot LSTM Predictions
+ggplot() +
+  geom_line(data = test, aes(x = YearMonth, y = Complaint_Volume), color = "blue") +
+  geom_line(data = test, aes(x = YearMonth, y = lstm_pred[,1]), color = "red") +
+  labs(title = "LSTM Forecast vs Actual", x = "Date", y = "Complaint Volume")
 
-# Convert back to original scale
-lstm_pred <- lstm_pred * (max(train$Complaint_Volume) - min(train$Complaint_Volume)) + min(train$Complaint_Volume)
+# ---------------------------------------------------------------
+# ✅ Model Selection (Compare RMSE)
+# ---------------------------------------------------------------
+prophet_rmse <- rmse(test$Complaint_Volume, forecast$yhat[train_size + 1:nrow(test)])
+xgb_rmse <- rmse(test$Complaint_Volume, xgb_pred)
+lstm_rmse <- rmse(test$Complaint_Volume, lstm_pred[,1])
 
-# Calculate RMSE for LSTM
-lstm_rmse <- rmse(test$Complaint_Volume, lstm_pred)
-
-### ----- Model Selection -----
-rmse_results <- data.frame(
+rmse_values <- data.frame(
   Model = c("Prophet", "XGBoost", "LSTM"),
   RMSE = c(prophet_rmse, xgb_rmse, lstm_rmse)
 )
 
-best_model <- rmse_results %>% filter(RMSE == min(RMSE))
+print(rmse_values)
 
-# Print RMSE Results
-print(rmse_results)
-cat("\nBest Model:", best_model$Model, "with RMSE:", best_model$RMSE, "\n")
+# Select Best Model
+best_model <- rmse_values[which.min(rmse_values$RMSE), "Model"]
+cat("Best model based on RMSE:", best_model)
