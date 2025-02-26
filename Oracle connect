@@ -1,16 +1,18 @@
-import cx_Oracle
+import pyodbc
 import pandas as pd
 
-# Database connection details
-dsn_tns = cx_Oracle.makedsn("your_host", "your_port", service_name="your_service_name")  
-conn = cx_Oracle.connect(user="your_username", password="your_password", dsn=dsn_tns)
+# Define ODBC connection string
+conn = pyodbc.connect(
+    "DSN=OracleDB;UID=your_username;PWD=your_password"
+)
 
-# Define and execute query
+# Execute SQL query and load data into a DataFrame
 query = "SELECT * FROM your_table"
 data = pd.read_sql(query, conn)
 
-# Close connection
+# Close the connection
 conn.close()
 
-# Display first few rows
+# Print first few rows
 print(data.head())
+
