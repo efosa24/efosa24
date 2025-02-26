@@ -1,0 +1,16 @@
+import cx_Oracle
+import pandas as pd
+
+# Database connection details
+dsn_tns = cx_Oracle.makedsn("your_host", "your_port", service_name="your_service_name")  
+conn = cx_Oracle.connect(user="your_username", password="your_password", dsn=dsn_tns)
+
+# Define and execute query
+query = "SELECT * FROM your_table"
+data = pd.read_sql(query, conn)
+
+# Close connection
+conn.close()
+
+# Display first few rows
+print(data.head())
