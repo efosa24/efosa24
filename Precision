@@ -12,6 +12,8 @@ data = {
 # Convert to DataFrame
 df = pd.DataFrame(data)
 
+format="%m/%d/%Y %I:%M:%S %p", errors="coerce"
+
 # Extract Month-Year
 df["Month"] = df["Date"].dt.strftime("%b-%Y")
 
