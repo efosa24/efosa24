@@ -1,0 +1,78 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Sample dataset (Replace this with actual data from CSV or database)
+data = {
+    "Date": pd.date_range(start="2024-01-01", periods=50, freq='D'),  # Example Dates
+    "Cat Level 3": np.random.randint(1, 6, size=50),  # Random category levels 1-5
+    "AI Status": np.random.choice(["Accept", "Reject", "Undetermined"], size=50)  # Random AI status
+}
+
+# Convert to DataFrame
+df = pd.DataFrame(data)
+
+# Extract Month-Year
+df["Month"] = df["Date"].dt.strftime("%b-%Y")
+
+# Calculate Metrics for Each Month & Cat Level 3
+metrics = df.groupby(["Month", "Cat Level 3"])["AI Status"].value_counts().unstack().fillna(0)
+
+# Rename Columns for Readability
+metrics.columns = ["TP", "FP", "FN"]  # Accept = TP, Reject = FP, Undetermined = FN
+
+# Calculate Precision, Recall, Accuracy, F1-Score
+metrics["Precision"] = metrics["TP"] / (metrics["TP"] + metrics["FP"])
+metrics["Recall"] = metrics["TP"] / (metrics["TP"] + metrics["FN"])
+metrics["Accuracy"] = (metrics["TP"]) / (metrics["TP"] + metrics["FP"] + metrics["FN"])
+metrics["F1-Score"] = 2 * (metrics["Precision"] * metrics["Recall"]) / (metrics["Precision"] + metrics["Recall"])
+
+# Replace NaN values with 0 (if division by zero occurs)
+metrics = metrics.fillna(0).reset_index()
+
+# Get the last four months dynamically
+latest_months = metrics["Month"].unique()[-4:]
+metrics_filtered = metrics[metrics["Month"].isin(latest_months)]
+
+# Plot Performance Metrics Over Time
+fig, ax = plt.subplots(2, 2, figsize=(12, 8))
+
+# Plot Precision
+for month in latest_months:
+    subset = metrics_filtered[metrics_filtered["Month"] == month]
+    ax[0, 0].plot(subset["Cat Level 3"], subset["Precision"], marker="o", linestyle="-", label=month)
+ax[0, 0].set_title("Precision Over Time")
+ax[0, 0].set_xlabel("Cat Level 3")
+ax[0, 0].set_ylabel("Precision")
+ax[0, 0].legend()
+
+# Plot Recall
+for month in latest_months:
+    subset = metrics_filtered[metrics_filtered["Month"] == month]
+    ax[0, 1].plot(subset["Cat Level 3"], subset["Recall"], marker="s", linestyle="--", label=month, color="orange")
+ax[0, 1].set_title("Recall Over Time")
+ax[0, 1].set_xlabel("Cat Level 3")
+ax[0, 1].set_ylabel("Recall")
+ax[0, 1].legend()
+
+# Plot Accuracy
+for month in latest_months:
+    subset = metrics_filtered[metrics_filtered["Month"] == month]
+    ax[1, 0].plot(subset["Cat Level 3"], subset["Accuracy"], marker="^", linestyle=":", label=month, color="green")
+ax[1, 0].set_title("Accuracy Over Time")
+ax[1, 0].set_xlabel("Cat Level 3")
+ax[1, 0].set_ylabel("Accuracy")
+ax[1, 0].legend()
+
+# Plot F1-Score
+for month in latest_months:
+    subset = metrics_filtered[metrics_filtered["Month"] == month]
+    ax[1, 1].plot(subset["Cat Level 3"], subset["F1-Score"], marker="d", linestyle="-.", label=month, color="red")
+ax[1, 1].set_title("F1-Score Over Time")
+ax[1, 1].set_xlabel("Cat Level 3")
+ax[1, 1].set_ylabel("F1-Score")
+ax[1, 1].legend()
+
+# Adjust layout
+plt.tight_layout()
+plt.show()
