@@ -1,0 +1,132 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Mar  4 13:15:48 2025
+
+@author: FEriam01
+"""
+
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Oct 23 10:08:30 2024
+
+@author: FEriam01
+"""
+
+import pandas as pd
+import numpy as np
+from openpyxl import Workbook
+from openpyxl.drawing.image import Image
+from openpyxl.utils.dataframe import dataframe_to_rows
+import matplotlib.pyplot as plt
+from datetime import datetime, timedelta
+
+data_list = pd.read_csv('C:/Users/FEriam01/OneDrive - Kenvue/Documents/Oversight metrics/2025/March 2025/Open Data2.csv',low_memory=False )
+
+data_list['region']= data_list['region'].replace([None,np.nan],'NA') 
+
+data_list['iss_entrd_pqms'] = pd.to_datetime(data_list['iss_entrd_pqms'], format='mixed')
+
+data_list['jnj_aware_dt'] = pd.to_datetime(data_list['jnj_aware_dt'], format='mixed')
+
+#The difference between issue entered to PQMS date and JnJ awareness date 
+
+data_list['date difference'] = (data_list['iss_entrd_pqms'] - data_list['jnj_aware_dt']).dt.days
+
+data_list['adjusted_issue_age'] = (data_list['issue_age'] - data_list['date difference'])
+
+#Assign Priority
+def assign_priority(seriousness):
+    if seriousness == "Serious":
+        return 1
+    elif seriousness == "Priority":
+        return 1
+    elif seriousness == "Non-Priority":
+        return 2
+    elif seriousness == "Lack of Effect":
+        return 3
+    elif seriousness == "Non-Serious":
+        return 2
+    elif seriousness == "Adverse Event":
+        return 3
+    elif seriousness == "AE Level 1":
+        return 3
+    elif seriousness == "AE Level 2":
+        return 3
+    elif seriousness == "AE Level 3":
+        return 3
+    elif seriousness == "Serious AE":
+        return 3
+    elif seriousness == "Preference":
+        return  4
+    else:
+        return None
+data_list['Priority'] = data_list['seriousness'].apply(assign_priority)
+
+#Sort by tracking number and priority and remove duplicates 
+data_list = data_list.sort_values(by=['tracking_no_link','Priority'])
+#Drop duplicates
+data_list = data_list.drop_duplicates(subset='tracking_no_link', keep='first')
+
+# Processed data function
+def processed_data1(data_list):
+    conditions = [
+        data_list['seriousness'].isin(['Adverse Event', 'AE Level 1', 'AE Level 2', 'AE Level 3', 'Serious AE']),
+        data_list['seriousness'].isin(['Non-Serious', 'Serious', 'Lack of Effect', 'Priority', 'Non-Priority']),
+        data_list['seriousness'] == 'Preference'
+    ]
+    choices = ['Adverse Event', 'PQC', 'Preference']
+    data_list['Enterprise'] = np.select(conditions, choices, default=np.nan)
+
+    # Filter based on 'Adverse Event' and 'reg_class'
+    data_list = data_list[~((data_list['Enterprise'] == 'Adverse Event') & 
+                            (~data_list['reg_class'].isin(['MEDICAL DEVICE', 'MEDICAL DEVICE II'])))]
+    return
+
+# Remove duplicates
+data_list = data_list.drop_duplicates(subset=['tracking_no_link'])
+# Calculate the previous month
+today = datetime.today()
+first_day_of_current_month = today.replace(day=1)
+last_day_of_previous_month = first_day_of_current_month - timedelta(days=1)
+previous_month = last_day_of_previous_month.strftime('%m/%d/%Y')
+
+# Function to process data and calculate the KPI values
+def processed_data_for_kpi(data_list):
+    # Filter data for Complaint Aging Overdue (Issue age > 45 and <= 365 and issue_status == "Open")
+    complaint_aging_overdue = data_list[(data_list['adjusted_issue_age'] > 45) & 
+                                        (data_list['adjusted_issue_age'] <= 365) & 
+                                        (data_list['issue_status'] == 'Open')]
+    
+    # Filter data for Complaint Aging (Issue age > 365 and issue_status == "Open")
+    complaint_aging = data_list[(data_list['adjusted_issue_age'] > 365) & 
+                                (data_list['issue_status'] == 'Open')]
+    
+    # Aggregate data to calculate KPI values for each region
+    regions = data_list['region'].unique()
+    kpi_data = []
+    
+    for region in regions:
+        # Total cases for the region
+        total_cases_region = data_list[data_list['region'] == region].shape[0]
+        
+        # Calculate the proportions for Complaint Aging Overdue
+        total_cases_overdue = complaint_aging_overdue[complaint_aging_overdue['region'] == region].shape[0]
+        overdue_value = total_cases_overdue / total_cases_region if total_cases_region > 0 else 0
+        
+        # Calculate the proportions for Complaint Aging
+        total_cases_aging = complaint_aging[complaint_aging['region'] == region].shape[0]
+        aging_value = total_cases_aging / total_cases_region if total_cases_region > 0 else 0
+        
+        # Append the KPI results for each region
+        kpi_data.append(['Complaint Aging Overdue', region, previous_month, overdue_value])
+        kpi_data.append(['Complaint Aging', region, previous_month , aging_value])
+    
+    # Convert the KPI data into a DataFrame
+    kpi_df = pd.DataFrame(kpi_data, columns=['Name of KPI', 'Region', 'Month', 'Value'])
+    
+    return kpi_df
+
+
+kpi_df = processed_data_for_kpi(data_list)
+
+kpi_df.to_excel('C:/Users/FEriam01/OneDrive - Kenvue/Documents/Oversight metrics/2025/March 2025/Open Overdue Cases_New.xlsx', index=False)
