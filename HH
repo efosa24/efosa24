@@ -1,38 +1,14 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Tue Mar  4 13:15:48 2025
+df= pd.concat([df1,df2,df3,df4], ignore_index=True)
 
-@author: FEriam01
-"""
+df['iss_entrd_pqms'] = pd.to_datetime(df['iss_entrd_pqms'], format='mixed')
 
-# -*- coding: utf-8 -*-
-"""
-Created on Wed Oct 23 10:08:30 2024
-
-@author: FEriam01
-"""
-
-import pandas as pd
-import numpy as np
-from openpyxl import Workbook
-from openpyxl.drawing.image import Image
-from openpyxl.utils.dataframe import dataframe_to_rows
-import matplotlib.pyplot as plt
-from datetime import datetime, timedelta
-
-data_list = pd.read_csv('C:/Users/FEriam01/OneDrive - Kenvue/Documents/Oversight metrics/2025/March 2025/Open Data2.csv',low_memory=False )
-
-data_list['region']= data_list['region'].replace([None,np.nan],'NA') 
-
-data_list['iss_entrd_pqms'] = pd.to_datetime(data_list['iss_entrd_pqms'], format='mixed')
-
-data_list['jnj_aware_dt'] = pd.to_datetime(data_list['jnj_aware_dt'], format='mixed')
+df['jnj_aware_dt'] = pd.to_datetime(df['jnj_aware_dt'], format='mixed')
 
 #The difference between issue entered to PQMS date and JnJ awareness date 
 
-data_list['date difference'] = (data_list['iss_entrd_pqms'] - data_list['jnj_aware_dt']).dt.days
+df['date difference'] = (df['iss_entrd_pqms'] - df['jnj_aware_dt']).dt.days
 
-data_list['adjusted_issue_age'] = (data_list['issue_age'] - data_list['date difference'])
+df['adjusted_issue_age'] = (df['issue_age'] - df['date difference'])
 
 #Assign Priority
 def assign_priority(seriousness):
@@ -60,73 +36,93 @@ def assign_priority(seriousness):
         return  4
     else:
         return None
-data_list['Priority'] = data_list['seriousness'].apply(assign_priority)
+df['Priority'] = df['seriousness'].apply(assign_priority)
 
 #Sort by tracking number and priority and remove duplicates 
-data_list = data_list.sort_values(by=['tracking_no_link','Priority'])
+df = df.sort_values(by=['tracking_no_link','Priority'])
 #Drop duplicates
-data_list = data_list.drop_duplicates(subset='tracking_no_link', keep='first')
+df = df.drop_duplicates(subset='tracking_no_link', keep='first')
 
-# Processed data function
-def processed_data1(data_list):
-    conditions = [
-        data_list['seriousness'].isin(['Adverse Event', 'AE Level 1', 'AE Level 2', 'AE Level 3', 'Serious AE']),
-        data_list['seriousness'].isin(['Non-Serious', 'Serious', 'Lack of Effect', 'Priority', 'Non-Priority']),
-        data_list['seriousness'] == 'Preference'
-    ]
-    choices = ['Adverse Event', 'PQC', 'Preference']
-    data_list['Enterprise'] = np.select(conditions, choices, default=np.nan)
 
-    # Filter based on 'Adverse Event' and 'reg_class'
-    data_list = data_list[~((data_list['Enterprise'] == 'Adverse Event') & 
-                            (~data_list['reg_class'].isin(['MEDICAL DEVICE', 'MEDICAL DEVICE II'])))]
-    return
+def processed_data(df):
+    # Assign 'Enterprise' column based on conditions
+    df['Enterprise'] = np.where(df['seriousness'].isin(['Adverse Event', 'AE Level 1', 'AE Level 2', 'AE Level 3', 'Serious AE']), 'Adverse Event',
+                        np.where(df['seriousness'].isin(['Non-Serious', 'Serious', 'Lack of Effect', 'Priority', 'Non-Priority']), 'PQC',
+                        np.where(df['seriousness'] == 'Preference', 'Preference', np.nan)))
+    
+    # Filter the dataframe
+    df_filtered = df[~((df['Enterprise'] == 'Adverse Event') & (~df['reg_class'].isin(['MEDICAL DEVICE', 'MEDICAL DEVICE II'])))]
+    return df_filtered
 
-# Remove duplicates
-data_list = data_list.drop_duplicates(subset=['tracking_no_link'])
+df_filtered = processed_data(df)
+
+
 # Calculate the previous month
 today = datetime.today()
 first_day_of_current_month = today.replace(day=1)
 last_day_of_previous_month = first_day_of_current_month - timedelta(days=1)
 previous_month = last_day_of_previous_month.strftime('%m/%d/%Y')
+# Define regions and their corresponding companies
+regions = {
+    'NA': ["J&J Consumer","NUTRITIONALS","McNeil Consumer","J&J Canada","North America Consumer","North America Drug"],
+    'APAC': ['APAC'],
+    'EMEA': ['EMEA'],
+    'LATAM': ['LATAM']
+}
 
-# Function to process data and calculate the KPI values
-def processed_data_for_kpi(data_list):
-    # Filter data for Complaint Aging Overdue (Issue age > 45 and <= 365 and issue_status == "Open")
-    complaint_aging_overdue = data_list[(data_list['adjusted_issue_age'] > 45) & 
-                                        (data_list['adjusted_issue_age'] <= 365) & 
-                                        (data_list['issue_status'] == 'Open')]
+# Function to calculate numerators and denominators for different KPIs
+def calculate_kpis(df_filtered, region_companies):
+    region_df = df_filtered[df_filtered['company'].isin(region_companies)]
+    total_cases = region_df.shape[0]
     
-    # Filter data for Complaint Aging (Issue age > 365 and issue_status == "Open")
-    complaint_aging = data_list[(data_list['adjusted_issue_age'] > 365) & 
-                                (data_list['issue_status'] == 'Open')]
+    closed_early_cases = region_df[(region_df['adjusted_issue_age'] <= 45)].shape[0]
+    complaint_aging_cases = region_df[(region_df['issue_status'] == 'Open') & (region_df['adjusted_issue_age'] > 365)].shape[0]
+    complaint_aging_overdue_cases = region_df[(region_df['issue_status'] == 'Open') & (region_df['adjusted_issue_age'] > 45)].shape[0]
     
-    # Aggregate data to calculate KPI values for each region
-    regions = data_list['region'].unique()
-    kpi_data = []
+    closed_early_value = (closed_early_cases / total_cases ) if total_cases > 0 else 0
+    complaint_aging_value = (complaint_aging_cases ) if total_cases > 0 else 0
+    complaint_aging_overdue_value = (complaint_aging_overdue_cases ) if total_cases > 0 else 0
     
-    for region in regions:
-        # Total cases for the region
-        total_cases_region = data_list[data_list['region'] == region].shape[0]
-        
-        # Calculate the proportions for Complaint Aging Overdue
-        total_cases_overdue = complaint_aging_overdue[complaint_aging_overdue['region'] == region].shape[0]
-        overdue_value = total_cases_overdue / total_cases_region if total_cases_region > 0 else 0
-        
-        # Calculate the proportions for Complaint Aging
-        total_cases_aging = complaint_aging[complaint_aging['region'] == region].shape[0]
-        aging_value = total_cases_aging / total_cases_region if total_cases_region > 0 else 0
-        
-        # Append the KPI results for each region
-        kpi_data.append(['Complaint Aging Overdue', region, previous_month, overdue_value])
-        kpi_data.append(['Complaint Aging', region, previous_month , aging_value])
     
-    # Convert the KPI data into a DataFrame
-    kpi_df = pd.DataFrame(kpi_data, columns=['Name of KPI', 'Region', 'Month', 'Value'])
-    
-    return kpi_df
+    return total_cases, closed_early_cases, closed_early_value, complaint_aging_value, complaint_aging_overdue_value
 
+# Creating the final DataFrame in the required format
+final_data = {
+    'KPI_Name': [],
+    'functionname': [],
+    'Organization': [],
+    'Month': [],
+    'Value': []
+}
 
-kpi_df = processed_data_for_kpi(data_list)
+for region, companies in regions.items():
+    total_cases, closed_early_cases, closed_early_value, complaint_aging_value, complaint_aging_overdue_value = calculate_kpis(df_filtered, companies)
+    
+    # Complaint Timeliness
 
-kpi_df.to_excel('C:/Users/FEriam01/OneDrive - Kenvue/Documents/Oversight metrics/2025/March 2025/Open Overdue Cases_New.xlsx', index=False)
+    final_data['KPI_Name'].extend(['Complaint Timeliness'] * 2)
+    final_data['functionname'].extend(['Denominator', 'Numerator'])
+    final_data['Organization'].extend([region] * 2)
+    final_data['Month'].extend([previous_month] * 2)
+    final_data['Value'].extend([total_cases, closed_early_cases])
+
+    # Complaint Aging
+    final_data['KPI_Name'].extend(['Complaint Aging'] * 2)
+    final_data['functionname'].extend(['Denominator', 'Numerator'])
+    final_data['Organization'].extend([region] * 2)
+    final_data['Month'].extend([previous_month] * 2)
+    final_data['Value'].extend([total_cases, complaint_aging_value])
+
+    # Complaint Aging Overdue
+    final_data['KPI_Name'].extend(['Complaint Aging Overdue'] * 2)
+    final_data['functionname'].extend(['Denominator', 'Numerator'])
+    final_data['Organization'].extend([region] * 2)
+    final_data['Month'].extend([previous_month] * 2)
+    final_data['Value'].extend([total_cases, complaint_aging_overdue_value])
+
+# Creating the final DataFrame
+final_df = pd.DataFrame(final_data)
+
+# Path to save report to Excel
+final_df.to_excel('C:/Users/FEriam01/OneDrive - Kenvue/Documents/Enterprise metrics/2025/Feb 2025/New_final_output_Feb.xlsx', index=False)
+
