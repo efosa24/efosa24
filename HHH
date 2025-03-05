@@ -1,0 +1,149 @@
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+
+# Sample Data Loading (replace with your actual files)
+df1 = pd.read_csv("closed_early_cases.csv")  # Data for closed_early_cases (df1)
+df2 = pd.read_csv("complaint_aging.csv")     # Data for complaint_aging_value (df2)
+
+# --- Step 1: Data Processing for df1 (closed_early_cases) ---
+df1['iss_entrd_pqms'] = pd.to_datetime(df1['iss_entrd_pqms'], format='mixed')
+df1['jnj_aware_dt'] = pd.to_datetime(df1['jnj_aware_dt'], format='mixed')
+
+df1['date_difference'] = (df1['iss_entrd_pqms'] - df1['jnj_aware_dt']).dt.days
+df1['adjusted_issue_age'] = df1['issue_age'] - df1['date_difference']
+
+# Assign Priority for df1
+def assign_priority(seriousness):
+    if seriousness == "Serious":
+        return 1
+    elif seriousness == "Priority":
+        return 1
+    elif seriousness == "Non-Priority":
+        return 2
+    elif seriousness == "Lack of Effect":
+        return 3
+    elif seriousness == "Non-Serious":
+        return 2
+    elif seriousness == "Adverse Event":
+        return 3
+    elif seriousness == "AE Level 1":
+        return 3
+    elif seriousness == "AE Level 2":
+        return 3
+    elif seriousness == "AE Level 3":
+        return 3
+    elif seriousness == "Serious AE":
+        return 3
+    elif seriousness == "Preference":
+        return 4
+    else:
+        return None
+
+df1['Priority'] = df1['seriousness'].apply(assign_priority)
+df1 = df1.sort_values(by=['tracking_no_link', 'Priority'])
+df1 = df1.drop_duplicates(subset='tracking_no_link', keep='first')
+
+# Apply additional processing to df1 (filtering for 'Enterprise' column)
+def processed_data(df):
+    df['Enterprise'] = np.where(df['seriousness'].isin(['Adverse Event', 'AE Level 1', 'AE Level 2', 'AE Level 3', 'Serious AE']), 'Adverse Event',
+                        np.where(df['seriousness'].isin(['Non-Serious', 'Serious', 'Lack of Effect', 'Priority', 'Non-Priority']), 'PQC',
+                        np.where(df['seriousness'] == 'Preference', 'Preference', np.nan)))
+    
+    df_filtered = df[~((df['Enterprise'] == 'Adverse Event') & (~df['reg_class'].isin(['MEDICAL DEVICE', 'MEDICAL DEVICE II'])))]
+
+    return df_filtered
+
+df1_filtered = processed_data(df1)
+
+# --- Step 2: Data Processing for df2 (complaint_aging_value) ---
+df2['iss_entrd_pqms'] = pd.to_datetime(df2['iss_entrd_pqms'], format='mixed')
+df2['jnj_aware_dt'] = pd.to_datetime(df2['jnj_aware_dt'], format='mixed')
+
+df2['date_difference'] = (df2['iss_entrd_pqms'] - df2['jnj_aware_dt']).dt.days
+df2['adjusted_issue_age'] = df2['issue_age'] - df2['date_difference']
+
+df2['Priority'] = df2['seriousness'].apply(assign_priority)
+df2 = df2.sort_values(by=['tracking_no_link', 'Priority'])
+df2 = df2.drop_duplicates(subset='tracking_no_link', keep='first')
+
+df2_filtered = processed_data(df2)
+
+# --- Step 3: Calculate KPIs for Both Data Sources ---
+# Function to calculate KPIs for df1 (closed_early_cases)
+def calculate_kpis_df1(df_filtered, region_companies):
+    region_df = df_filtered[df_filtered['company'].isin(region_companies)]
+    total_cases = region_df.shape[0]
+    
+    closed_early_cases = region_df[(region_df['adjusted_issue_age'] <= 45)].shape[0]
+    closed_early_value = (closed_early_cases / total_cases) if total_cases > 0 else 0
+    
+    return total_cases, closed_early_cases, closed_early_value
+
+# Function to calculate KPIs for df2 (complaint_aging_value)
+def calculate_kpis_df2(df_filtered, region_companies):
+    region_df = df_filtered[df_filtered['company'].isin(region_companies)]
+    total_cases = region_df.shape[0]
+    
+    complaint_aging_cases = region_df[(region_df['issue_status'] == 'Open') & (region_df['adjusted_issue_age'] > 365)].shape[0]
+    complaint_aging_overdue_cases = region_df[(region_df['issue_status'] == 'Open') & (region_df['adjusted_issue_age'] > 45)].shape[0]
+    
+    complaint_aging_value = (complaint_aging_cases) if total_cases > 0 else 0
+    complaint_aging_overdue_value = (complaint_aging_overdue_cases) if total_cases > 0 else 0
+    
+    return total_cases, complaint_aging_value, complaint_aging_overdue_value
+
+# --- Step 4: Calculate KPIs for All Regions ---
+regions = {
+    'NA': ["J&J Consumer", "NUTRITIONALS", "McNeil Consumer", "J&J Canada", "North America Consumer", "North America Drug"],
+    'APAC': ['APAC'],
+    'EMEA': ['EMEA'],
+    'LATAM': ['LATAM']
+}
+
+final_data = {
+    'KPI_Name': [],
+    'functionname': [],
+    'Organization': [],
+    'Month': [],
+    'Value': []
+}
+
+today = datetime.today()
+first_day_of_current_month = today.replace(day=1)
+last_day_of_previous_month = first_day_of_current_month - timedelta(days=1)
+previous_month = last_day_of_previous_month.strftime('%m/%d/%Y')
+
+for region, companies in regions.items():
+    # Calculate KPIs for df1 (closed_early_cases)
+    total_cases_1, closed_early_cases, closed_early_value = calculate_kpis_df1(df1_filtered, companies)
+    
+    # Calculate KPIs for df2 (complaint_aging_value)
+    total_cases_2, complaint_aging_value, complaint_aging_overdue_value = calculate_kpis_df2(df2_filtered, companies)
+    
+    # Adding Complaint Timeliness for df1
+    final_data['KPI_Name'].extend(['Complaint Timeliness'] * 2)
+    final_data['functionname'].extend(['Denominator', 'Numerator'])
+    final_data['Organization'].extend([region] * 2)
+    final_data['Month'].extend([previous_month] * 2)
+    final_data['Value'].extend([total_cases_1, closed_early_cases])
+
+    # Adding Complaint Aging for df2
+    final_data['KPI_Name'].extend(['Complaint Aging'] * 2)
+    final_data['functionname'].extend(['Denominator', 'Numerator'])
+    final_data['Organization'].extend([region] * 2)
+    final_data['Month'].extend([previous_month] * 2)
+    final_data['Value'].extend([total_cases_2, complaint_aging_value])
+
+    # Adding Complaint Aging Overdue for df2
+    final_data['KPI_Name'].extend(['Complaint Aging Overdue'] * 2)
+    final_data['functionname'].extend(['Denominator', 'Numerator'])
+    final_data['Organization'].extend([region] * 2)
+    final_data['Month'].extend([previous_month] * 2)
+    final_data['Value'].extend([total_cases_2, complaint_aging_overdue_value])
+
+# Final DataFrame containing all the KPIs
+final_df = pd.DataFrame(final_data)
+
+# Optionally, display or save the final_df
+print(final_df)
