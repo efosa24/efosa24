@@ -1,15 +1,7 @@
-IF [New Cal Age] <= 45 THEN
-    // Calculate the percentage of "On-Time"
-    IF SUM(IF [Late?] = "%On-Time" THEN 1 ELSE 0 END) * 100 / COUNT([Late?]) >= 95 THEN "Green"
-    ELSEIF SUM(IF [Late?] = "%On-Time" THEN 1 ELSE 0 END) * 100 / COUNT([Late?]) >= 90 THEN "Yellow"
-    ELSE "Red"
-    END
-ELSE
-    // Calculate the percentage of "Late"
-    IF SUM(IF [Late?] = "%Late" THEN 1 ELSE 0 END) * 100 / COUNT([Late?]) >= 95 THEN "Red"
-    ELSEIF SUM(IF [Late?] = "%Late" THEN 1 ELSE 0 END) * 100 / COUNT([Late?]) >= 90 THEN "Yellow"
-    ELSE "Green"
-    END
+IF SUM(IF [Late?] = "On-Time" THEN 1 ELSE 0 END) / COUNT([Late?]) >= 0.95 THEN "Green"
+ELSEIF SUM(IF [Late?] = "On-Time" THEN 1 ELSE 0 END) / COUNT([Late?]) >= 0.90 THEN "Yellow"
+ELSE "Red"
 END
+
 
 
