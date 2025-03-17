@@ -1,9 +1,15 @@
-IF [Late GCV] = "%On-Time" THEN
-    IF SUM([On-Time Percentage]) > 0.98 THEN "Green"
-    ELSEIF SUM([On-Time Percentage]) >= 0.95 THEN "Yellow"
-    ELSE "Red"
+IF [Cmpln Sts Cd] ='Open' AND [Case Age]>45 THEN
+    IF [Case Age]<=75 THEN
+    '45 to 75 Days'
+    ELSEIF [Case Age] <=104 THEN
+    '76 to 104 Days'
+    ELSEIF [Case Age] <=365 THEN
+    '105 to 365 Days'
+ELSE
+    '365+ Days'
 END
-ELSE "Blue"
+ELSE
+    NULL
 END
 
 
