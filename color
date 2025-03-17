@@ -1,10 +1,9 @@
-IF [Late?] = "Not Late" THEN 
-    IF SUM(IF [Late?] = "Not Late" THEN 1 ELSE 0 END) * 100 / COUNT([Late?]) >= 95 THEN "Green"
-    ELSEIF SUM(IF [Late?] = "Not Late" THEN 1 ELSE 0 END) * 100 / COUNT([Late?]) >= 90 THEN "Yellow"
+IF [Late GCV] = "%On-Time" THEN
+    IF SUM([On-Time Percentage]) > 0.98 THEN "Green"
+    ELSEIF SUM([On-Time Percentage]) >= 0.95 THEN "Yellow"
     ELSE "Red"
-    END
-ELSE 
-    "Blue"
+END
+ELSE "Blue"
 END
 
 
