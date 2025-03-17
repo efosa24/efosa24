@@ -1,15 +1,21 @@
-IF [Cmpln Sts Cd] = 'Open' AND [Case Age] > 30 THEN
-IF [Case Age] <= 45 THEN
-        '30 to 45 Days'
-    ELSEIF [Case Age] <= 75 THEN
-        '45 to 75 Days'
-    ELSEIF [Case Age] <= 104 THEN
-        '76 to 104 Days'
-    ELSEIF [Case Age] <= 365 THEN
-        '105 to 365 Days'
-    ELSE
-        '365+ Days'
-    END
+IF [Cmpln Sts Cd] = 'Open' AND [Case Age] >= 30 AND [Case Age] <= 35 THEN
+    '30 to 35 Days'
+ELSEIF [Cmpln Sts Cd] = 'Open' AND [Case Age] >= 36 AND [Case Age] <= 40 THEN
+    '36 to 40 Days'
+ELSEIF [Cmpln Sts Cd] = 'Open' AND [Case Age] >= 41 AND [Case Age] <= 45 THEN
+    '41 to 45 Days'
+ELSEIF [Cmpln Sts Cd] = 'Open' AND [Case Age] > 45 AND [Case Age] <= 75 THEN
+    '45 to 75 Days'
+ELSEIF [Cmpln Sts Cd] = 'Open' AND [Case Age] > 75 AND [Case Age] <= 104 THEN
+    '76 to 104 Days'
+ELSEIF [Cmpln Sts Cd] = 'Open' AND [Case Age] > 104 AND [Case Age] <= 365 THEN
+    '105 to 365 Days'
+ELSEIF [Cmpln Sts Cd] = 'Open' AND [Case Age] > 365 THEN
+    '365+ Days'
+ELSE
+    NULL
+END
+
 
 
 
