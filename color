@@ -1,13 +1,16 @@
-df['iss_entrd_pqms'] = pd.to_datetime(df['iss_entrd_pqms'], format='mixed')
+// Calculate the percentage of On-Time (Not Late)
+LET on_time_percent = SUM(IF [Late?] = "Not Late" THEN 1 ELSE 0 END) * 100 / COUNT([Late?]);
 
-df['jnj_aware_dt'] = pd.to_datetime(df['jnj_aware_dt'], format='mixed')
-
-#The difference between issue entered to PQMS date and JnJ awareness date 
-
-df['date difference'] = (df['iss_entrd_pqms'] - df['jnj_aware_dt']).dt.days
-
-df['adjusted_issue_age'] = (df['issue_age'] - df['date difference'])
-
+// Assign colors
+IF [Late?] = "Not Late" THEN 
+    CASE 
+        WHEN on_time_percent >= 95 THEN "Green"
+        WHEN on_time_percent >= 90 THEN "Yellow"
+        ELSE "Red"
+    END
+ELSE 
+    "Blue"
+END
 
 
 
