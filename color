@@ -1,16 +1,66 @@
-// Calculate the percentage of On-Time (Not Late)
-LET on_time_percent = SUM(IF [Late?] = "Not Late" THEN 1 ELSE 0 END) * 100 / COUNT([Late?]);
+data$region[is.na(data$region)] <- "NA"
 
-// Assign colors
-IF [Late?] = "Not Late" THEN 
-    CASE 
-        WHEN on_time_percent >= 95 THEN "Green"
-        WHEN on_time_percent >= 90 THEN "Yellow"
-        ELSE "Red"
-    END
-ELSE 
-    "Blue"
-END
+# Step 1: Select Top 6 Products per Region
+top_products_per_region <- data %>%
+  group_by(region, fmly_lvl2_desc) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  arrange(region, desc(count)) %>%
+  group_by(region) %>%
+  slice_head(n = 8) # Select top 6 products per region
+
+# Step 2: Generate Word Clouds for Each Region and Save to PDF
+create_wordcloud <- function(product_name, text_data) {
+  # Filter text data for the product
+  filtered_data <- text_data %>%
+    filter(fmly_lvl2_desc == product_name) %>%
+    pull(Complaint_Description)
+  
+  # Create a text corpus
+  corpus <- Corpus(VectorSource(filtered_data))
+  custom_stopwords <- c("auto", "product","scn","tylenol","rogaine","aveeno","listerine",'purchased',
+                        "bought", "baby", 'powder', 'neutrogena', 'nicorette','feedback','johnson',
+                        'desitin','lubriderm', 'bandaid','dabao','bandaids','like', 'foam','Hair',
+                        'lotion', 'skin','adhesive', 'johnsons','products','email','hotline','turned',
+                        'wiyang', 'bandages','sundown','pads','hipoglos','sunscreen','husband', 'didnt','one',
+                        'penaten','cream','regaine','bebe','diverted','will','please','using') 
+  # Clean the text
+  corpus <- corpus %>%
+    tm_map(content_transformer(tolower)) %>%
+    tm_map(removePunctuation) %>%
+    tm_map(removeNumbers) %>%
+    tm_map(removeWords, stopwords("en")) %>%
+    tm_map(removeWords, custom_stopwords)%>%
+    tm_map(stripWhitespace)
+  
+  # Create a document-term matrix
+  dtm <- DocumentTermMatrix(corpus)
+  word_freq <- sort(colSums(as.matrix(dtm)), decreasing = TRUE)
+  
+  # Generate the word cloud
+  wordcloud(words = names(word_freq), freq = word_freq, min.freq = 1, 
+            max.words = 50, random.order = FALSE, colors = brewer.pal(8, "Dark2"))
+  title(product_name)
+}
+
+# Step 3: Save to PDF
+pdf("Top_Products_WordClouds_by_Region1.pdf", width = 14, height = 10)
+for (region_name in unique(top_products_per_region$region)) {
+  # Filter top products for the region
+  region_data <- top_products_per_region %>%
+    filter(region == region_name)
+  
+  # Create a grid of word clouds
+  par(mfrow = c(2, 4)) # Arrange 6 plots (2 rows, 3 columns)
+  for (product_name in region_data$fmly_lvl2_desc) {
+    create_wordcloud(product_name, data)
+  }
+  mtext(paste(region_name, "Top Products"), outer = TRUE, cex = 1.5, line = -2)
+}
+dev.off()
+
+cat("Word clouds saved to 'Top_Products_WordClouds_by_Region.pdf'.\n")
+
+
 
 
 
