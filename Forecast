@@ -5,18 +5,15 @@ library(tidyverse)
 library(lubridate)
 library(forecast)
 library(prophet)
-library(keras)
-library(tensorflow)
 library(Metrics)
-library(tsibble)
 
 # =======================
 # Load & Preprocess Data
 # =======================
-# Replace with your actual path
+# Replace with your actual file path
 complaints <- read.csv("complaints.csv")
 
-# Ensure date column exists and is formatted
+# Ensure date is in Date format
 complaints$date <- as.Date(complaints$date)
 
 # Monthly aggregation
@@ -25,80 +22,24 @@ monthly_data <- complaints %>%
   summarise(count = n()) %>%
   ungroup()
 
-# Time series format for ARIMA
+# =======================
+# ARIMA Forecast
+# =======================
 ts_data <- ts(monthly_data$count, frequency = 12, start = c(year(min(monthly_data$month)), month(min(monthly_data$month))))
-
-# =======================
-# ARIMA Model
-# =======================
 arima_model <- auto.arima(ts_data)
 arima_forecast <- forecast(arima_model, h = 6)
-rmse_arima <- rmse(tail(ts_data, 6), arima_forecast$mean)
+
+# Plot ARIMA Forecast
+plot(arima_forecast, main = "ARIMA Forecast of Complaint Volume", xlab = "Time", ylab = "Monthly Complaints")
 
 # =======================
-# Prophet Model
+# Prophet Forecast
 # =======================
 prophet_df <- monthly_data %>% rename(ds = month, y = count)
 prophet_model <- prophet(prophet_df)
 future <- make_future_dataframe(prophet_model, periods = 6, freq = "month")
 forecast_prophet <- predict(prophet_model, future)
-actual_prophet <- tail(prophet_df$y, 6)
-predicted_prophet <- tail(forecast_prophet$yhat, 6)
-rmse_prophet <- rmse(actual_prophet, predicted_prophet)
 
-# =======================
-# LSTM Model
-# =======================
-# Normalize data
-count_scaled <- scale(monthly_data$count)
-lag <- 12
-
-# Create lagged features
-x <- array(NA, dim = c(length(count_scaled) - lag, lag, 1))
-y <- array(NA, dim = c(length(count_scaled) - lag))
-for (i in 1:(length(count_scaled) - lag)) {
-  x[i,,] <- count_scaled[i:(i + lag - 1)]
-  y[i] <- count_scaled[i + lag]
-}
-
-# Train/Test split
-train_size <- floor(0.8 * dim(x)[1])
-x_train <- x[1:train_size,,]
-y_train <- y[1:train_size]
-x_test <- x[(train_size + 1):dim(x)[1],,]
-y_test <- y[(train_size + 1):length(y)]
-
-# Build and compile LSTM model
-model <- keras_model_sequential() %>%
-  layer_lstm(units = 50, input_shape = c(lag, 1)) %>%
-  layer_dense(units = 1)
-model %>% compile(loss = 'mean_squared_error', optimizer = 'adam')
-
-# Fit model
-model %>% fit(x_train, y_train, epochs = 100, batch_size = 1, verbose = 0)
-
-# Predict
-predictions <- model %>% predict(x_test)
-rmse_lstm <- rmse(y_test, predictions)
-
-# =======================
-# Results
-# =======================
-cat("Model Comparison (RMSE):\n")
-cat(sprintf("ARIMA:  %.3f\n", rmse_arima))
-cat(sprintf("Prophet: %.3f\n", rmse_prophet))
-cat(sprintf("LSTM:    %.3f\n", rmse_lstm))
-
-# =======================
-# Optional: Plot Forecasts
-# =======================
-# ARIMA
-plot(arima_forecast, main = "ARIMA Forecast")
-
-# Prophet
-prophet_plot <- plot(prophet_model, forecast_prophet)
-
-# LSTM
-plot(y_test, type = "l", col = "blue", main = "LSTM Forecast vs Actual", ylab = "Normalized Count")
-lines(predictions, col = "red")
-legend("topright", legend = c("Actual", "Predicted"), col = c("blue", "red"), lty = 1)
+# Plot Prophet Forecast
+plot(prophet_model, forecast_prophet) + 
+  ggtitle("Prophet Forecast of Complaint Volume")
