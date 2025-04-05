@@ -1,0 +1,210 @@
+# Load Libraries
+library(tidyverse)
+library(lubridate)
+library(forecast)
+library(prophet)
+library(randomForest)
+library(xgboost)
+library(caret)
+library(Metrics)
+library(gridExtra)
+
+# ----------------------------
+# SAMPLE DATA GENERATION
+# ----------------------------
+set.seed(123)
+n <- 1000
+
+months <- seq.Date(from = as.Date("2022-01-01"), by = "month", length.out = 36)
+products <- paste("Drug", LETTERS[1:10])
+countries <- c("USA", "India", "Germany", "Brazil", "UK")
+categories <- c("Labeling Error", "Adverse Event", "Packaging Issue")
+
+sample_data <- expand.grid(
+  Month = months,
+  Product.Name = products,
+  Issue.Country = countries,
+  Complaint.Category = categories
+) %>%
+  mutate(
+    Complaint.Count = sample(10:80, n(), replace = TRUE),
+    `Late..` = runif(n(), 0.2, 0.7),
+    `Serious..` = runif(n(), 0.1, 0.6)
+  )
+
+# ----------------------------
+# AGGREGATE FOR TOP PRODUCTS & REGIONS
+# ----------------------------
+top_products <- sample_data %>%
+  group_by(Product.Name) %>%
+  summarise(Total = sum(Complaint.Count)) %>%
+  top_n(5, Total) %>%
+  pull(Product.Name)
+
+top_regions <- sample_data %>%
+  group_by(Issue.Country) %>%
+  summarise(Total = sum(Complaint.Count)) %>%
+  top_n(5, Total) %>%
+  pull(Issue.Country)
+
+monthly_df <- sample_data %>%
+  filter(Product.Name %in% top_products & Issue.Country %in% top_regions) %>%
+  arrange(Month) %>%
+  group_by(Product.Name, Issue.Country, Complaint.Category) %>%
+  mutate(
+    MonthNum = month(Month),
+    Year = year(Month),
+    Lag1 = lag(Complaint.Count, 1),
+    LagLate = lag(`Late..`, 1),
+    LagSerious = lag(`Serious..`, 1)
+  ) %>%
+  drop_na() %>%
+  ungroup()
+
+# Convert categorical variables to factors
+monthly_df$Product.Name <- as.factor(monthly_df$Product.Name)
+monthly_df$Issue.Country <- as.factor(monthly_df$Issue.Country)
+monthly_df$Complaint.Category <- as.factor(monthly_df$Complaint.Category)
+
+# ----------------------------
+# FORECASTING BY MONTH/YEAR
+# ----------------------------
+monthly_agg <- monthly_df %>%
+  group_by(Month) %>%
+  summarise(
+    Complaint.Count = sum(Complaint.Count),
+    `Late..` = mean(`Late..`),
+    `Serious..` = mean(`Serious..`)
+  ) %>%
+  arrange(Month) %>%
+  mutate(
+    MonthNum = month(Month),
+    Year = year(Month),
+    Lag1 = lag(Complaint.Count, 1),
+    LagLate = lag(`Late..`, 1),
+    LagSerious = lag(`Serious..`, 1)
+  ) %>%
+  drop_na()
+
+# Train-test split
+train <- monthly_agg[1:round(0.8 * nrow(monthly_agg)), ]
+test <- monthly_agg[(round(0.8 * nrow(monthly_agg)) + 1):nrow(monthly_agg), ]
+
+# ----------------------------
+# 1. ARIMA MODEL (UNIVARIATE)
+# ----------------------------
+ts_data <- ts(train$Complaint.Count, frequency = 12)
+arima_model <- auto.arima(ts_data)
+arima_forecast <- forecast(arima_model, h = nrow(test))$mean
+arima_rmse <- rmse(test$Complaint.Count, arima_forecast)
+arima_error <- test$Complaint.Count - arima_forecast
+
+# ----------------------------
+# 2. PROPHET MODEL (UNIVARIATE)
+# ----------------------------
+prophet_df <- train %>% select(Month, Complaint.Count) %>% rename(ds = Month, y = Complaint.Count)
+prophet_model <- prophet(prophet_df, yearly.seasonality = TRUE, weekly.seasonality = FALSE)
+future <- make_future_dataframe(prophet_model, periods = nrow(test), freq = "month")
+forecast_prophet <- predict(prophet_model, future)
+prophet_pred <- tail(forecast_prophet$yhat, nrow(test))
+prophet_rmse <- rmse(test$Complaint.Count, prophet_pred)
+prophet_error <- test$Complaint.Count - prophet_pred
+
+# ----------------------------
+# 3. RANDOM FOREST MODEL (MULTIVARIATE)
+# ----------------------------
+rf_model <- randomForest(Complaint.Count ~ MonthNum + Year + Lag1 + LagLate + LagSerious + `Late..` + `Serious..`, data = train)
+rf_pred <- predict(rf_model, newdata = test)
+rf_rmse <- rmse(test$Complaint.Count, rf_pred)
+rf_error <- test$Complaint.Count - rf_pred
+
+# ----------------------------
+# 4. XGBOOST MODEL (MULTIVARIATE)
+# ----------------------------
+X_train <- model.matrix(Complaint.Count ~ . -Month, data = train)[, -1]
+y_train <- train$Complaint.Count
+
+X_test <- model.matrix(Complaint.Count ~ . -Month, data = test)[, -1]
+y_test <- test$Complaint.Count
+
+xgb_model <- xgboost(
+  data = X_train,
+  label = y_train,
+  nrounds = 100,
+  objective = "reg:squarederror",
+  verbose = 0
+)
+
+xgb_pred <- predict(xgb_model, X_test)
+xgb_rmse <- rmse(y_test, xgb_pred)
+xgb_error <- y_test - xgb_pred
+
+# ----------------------------
+# 5. MODEL COMPARISON
+# ----------------------------
+results <- data.frame(
+  Model = c("ARIMA", "Prophet", "Random Forest", "XGBoost"),
+  RMSE = c(arima_rmse, prophet_rmse, rf_rmse, xgb_rmse)
+)
+
+print(results)
+
+# ----------------------------
+# 6. FORECAST PLOTS
+# ----------------------------
+p1 <- ggplot(test, aes(x = Month)) + scale_x_date(date_labels = "%B %Y") +
+  geom_line(aes(y = Complaint.Count, color = "Actual"), size = 1.1) +
+  geom_line(aes(y = arima_forecast, color = "ARIMA Forecast"), linetype = "dashed", size = 1) +
+  labs(title = "ARIMA Forecast vs Actual", y = "Complaints") + theme_minimal() + theme(legend.title = element_blank(), legend.position = "bottom")
+
+p2 <- ggplot(test, aes(x = Month)) + scale_x_date(date_labels = "%B %Y") +
+  geom_line(aes(y = Complaint.Count, color = "Actual"), size = 1.1) +
+  geom_line(aes(y = prophet_pred, color = "Prophet Forecast"), linetype = "dashed", size = 1) +
+  labs(title = "Prophet Forecast vs Actual", y = "Complaints") + theme_minimal()
+
+p3 <- ggplot(test, aes(x = Month)) + scale_x_date(date_labels = "%B %Y") +
+  geom_line(aes(y = Complaint.Count, color = "Actual"), size = 1.1) +
+  geom_line(aes(y = rf_pred, color = "Random Forest Forecast"), linetype = "dashed", size = 1) +
+  labs(title = "Random Forest Forecast vs Actual", y = "Complaints") + theme_minimal()
+
+p4 <- ggplot(test, aes(x = Month)) + scale_x_date(date_labels = "%B %Y") +
+  geom_line(aes(y = Complaint.Count, color = "Actual"), size = 1.1) +
+  geom_line(aes(y = xgb_pred, color = "XGBoost Forecast"), linetype = "dashed", size = 1) +
+  labs(title = "XGBoost Forecast vs Actual", y = "Complaints") + theme_minimal()
+
+grid.arrange(p1, p2, p3, p4, ncol = 2)
+
+# ----------------------------
+# 7. RESIDUAL PLOTS
+# ----------------------------
+res_df <- data.frame(
+  Month = test$Month,
+  ARIMA = arima_error,
+  Prophet = prophet_error,
+  RandomForest = rf_error,
+  XGBoost = xgb_error
+) %>%
+  pivot_longer(cols = -Month, names_to = "Model", values_to = "Residual")
+
+ggplot(res_df, aes(x = Month, y = Residual)) + scale_x_date(date_labels = "%B %Y") +
+  geom_line(color = "darkred", size = 0.8) +
+  facet_wrap(~Model, scales = "free_y") +
+  labs(title = "Residuals Over Time by Model", y = "Residuals") +
+  theme_minimal()
+
+# ----------------------------
+# 8. ERROR DISTRIBUTION
+# ----------------------------
+error_df <- data.frame(
+  ARIMA = arima_error,
+  Prophet = prophet_error,
+  RandomForest = rf_error,
+  XGBoost = xgb_error
+)
+
+error_df_long <- pivot_longer(error_df, cols = everything(), names_to = "Model", values_to = "Error")
+
+ggplot(error_df_long, aes(x = Error, fill = Model)) +
+  geom_density(alpha = 0.5) +
+  labs(title = "Error Distribution by Model") +
+  theme_minimal()
