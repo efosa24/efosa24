@@ -1,37 +1,19 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Fri Nov 22 11:33:26 2024
-
-@author: FEriam01
-"""
-
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 
-df = pd.read_csv("C:/Users/FEriam01/OneDrive - Kenvue/Documents/Oversight metrics/2025/April/Data.csv")
+# Load the dataset
+df = pd.read_csv("C:/Users/FEriam01/OneDrive/Documents/Oversight metrics/2025/April/Data.csv")
 
-#Load the data
-#df1 = pd.read_csv('C:/Users/FEriam01/OneDrive - Kenvue/Documents/Oversight metrics/2025/April/March Data/APAC.csv')
-#df2 = pd.read_csv('C:/Users/FEriam01/OneDrive - Kenvue/Documents/Oversight metrics/2025/April/March Data/EMEA.csv')
-#df3 = pd.read_csv('C:/Users/FEriam01/OneDrive - Kenvue/Documents/Oversight metrics/2025/April/March Data/LATAM.csv')
-#df4 = pd.read_csv('C:/Users/FEriam01/OneDrive - Kenvue/Documents/Oversight metrics/2025/April/March Data/NA.csv')
-
-#df= pd.concat([df1,df2,df3,df4], ignore_index=True)
-#Convert date to datetime
-
+# Convert dates
 df['iss_entrd_pqms'] = pd.to_datetime(df['iss_entrd_pqms'], format='mixed')
-
 df['jnj_aware_dt'] = pd.to_datetime(df['jnj_aware_dt'], format='mixed')
 
-#The difference between issue entered to PQMS date and JnJ awareness date 
-
+# Calculate adjusted age
 df['date difference'] = (df['iss_entrd_pqms'] - df['jnj_aware_dt']).dt.days
+df['adjusted_issue_age'] = df['issue_age'] - df['date difference']
 
-df['adjusted_issue_age'] = (df['issue_age'] - df['date difference'])
-
-
-# Function to assign priority based on seriousness
+# Assign priority
 def assign_priority(seriousness):
     if seriousness in ["Serious", "Priority"]:
         return 1
@@ -41,10 +23,12 @@ def assign_priority(seriousness):
         return 3
     elif seriousness == "Preference":
         return 4
-    else:
-        return None
+    return None
 
-# Function to process data based on enterprise criteria
+df['Priority'] = df['seriousness'].apply(assign_priority)
+df = df.sort_values(by=['tracking_no_link', 'Priority']).drop_duplicates('tracking_no_link', keep='first')
+
+# Enterprise classification
 def processed_data(df):
     df['Enterprise'] = np.where(
         df['seriousness'].isin(['Adverse Event', 'AE Level 1', 'AE Level 2', 'AE Level 3', 'Serious AE']),
@@ -57,172 +41,100 @@ def processed_data(df):
     )
     return df[~((df['Enterprise'] == 'Adverse Event') & (~df['reg_class'].isin(['MEDICAL DEVICE', 'MEDICAL DEVICE II'])))]
 
-# Function to calculate previous month
-def get_previous_month():
-    today = datetime.today()
-    first_day_of_current_month = today.replace(day=1)
-    last_day_of_previous_month = first_day_of_current_month - timedelta(days=1)
-    return last_day_of_previous_month.strftime('%m/%d/%Y')
+df_filtered = processed_data(df)
 
-# Function to calculate KPIs
-def calculate_kpis(df_filtered, region_companies):
-    region_df = df_filtered[df_filtered['company'].isin(region_companies)]
-    total_cases = region_df.shape[0]
-    closed_early_cases = region_df[(region_df['adjusted_issue_age'] <= 45)].shape[0]
-    complaint_aging_cases = region_df[(region_df['issue_status'] == 'Open') & (region_df['issue_age'] > 365)].shape[0]
-    complaint_aging_overdue_cases = region_df[(region_df['issue_status'] == 'Open') & (region_df['issue_age'] > 45)].shape[0]
-    return total_cases, closed_early_cases, complaint_aging_cases, complaint_aging_overdue_cases
+# Add flags and other derived columns
+df_filtered['Late?'] = np.where(df_filtered['adjusted_issue_age'] > 45, 'Late', 'Not Late')
+df_filtered['tracking_no_link'] = df_filtered['tracking_no_link'].astype(str)
+df_filtered['Number'] = df_filtered['tracking_no_link'].str[:3]
+df_filtered['Dup'] = ""
 
-# Define regions and corresponding fields
+# Country assignment
+def check_country(df):
+    df['US_CAN'] = 'No country information found'
+    for i, row in df.iterrows():
+        name = row['prod_fmly_nm']
+        if "CAN" in name:
+            df.at[i, 'US_CAN'] = "Canada"
+        elif "USA" in name or "SA" in name:
+            df.at[i, 'US_CAN'] = "USA"
+        elif "AP" in name:
+            df.at[i, 'US_CAN'] = "APAC"
+        elif "CA" in name or "NA" in name:
+            df.at[i, 'US_CAN'] = "Canada"
+        elif "EU" in name:
+            df.at[i, 'US_CAN'] = "EMEA"
+    return df
+
+df_filtered = check_country(df_filtered)
+
+# Define region mapping
 regions = {
     'NA': ["J&J Consumer", "NUTRITIONALS", "McNeil Consumer", "J&J Canada", "North America Consumer", "North America Drug"],
     'APAC': ['APAC'],
     'EMEA': ['EMEA'],
     'LATAM': ['LATAM'],
-    'McNeil': ["McNeil Nutritionals",
-                          "McNeil US OTC Home Office",
-                          "McNeil EM Investigator",
-                          "Fort Washington",
-                          "lancaster",
-                          "Las Piedras",
-                          "Guelph"]
+    'McNeil': ["McNeil Nutritionals", "McNeil US OTC Home Office", "McNeil EM Investigator", "Fort Washington", "Lancaster", "Las Piedras", "Guelph"]
 }
 
+# Define fields for export
 region_fields = {
-    'APAC': ["tracking_no_link","Dup","owner_grp","seriousness","reg_class",
-                               "prod_fmly_nm","issue_status",	"issue_age","Late?","iss_cls_oper_id",
-                               "iss_stat_esig_id","jnj_aware_dt","cat_desc","iss_cls_dt",
-                               "cyc_time_init","iss_entrd_gcc","issue_from","iss_reopen_dt","issue_cntry",
-                               "prod_mfg","fmly_lvl1_desc","iss_entrd_pqms"],
-    
-    'EMEA': ["tracking_no_link","Dup","owner_grp","seriousness","reg_class","prod_fmly_nm",
-                                 "issue_status","issue_age","Late?",	"iss_cls_oper_id","iss_stat_esig_id",
-                                 "jnj_aware_dt","cat_desc",	"iss_cls_dt","cyc_time_init","iss_entrd_gcc",
-                                 "issue_from","iss_reopen_dt","issue_cntry","prod_mfg"],
-    
-    'LATAM': ["tracking_no_link","Dup","owner_grp","seriousness","reg_class","prod_fmly_nm",
-                                 "issue_status","issue_age","Late?","iss_cls_oper_id",	"iss_stat_esig_id",
-                                 "jnj_aware_dt","cat_desc",	"iss_cls_dt","cyc_time_init","iss_entrd_gcc",
-                                 "issue_from","iss_reopen_dt","issue_cntry",	"owner"],
-    
-    'NA': ["tracking_no_link","Dup","Number","owner_grp","seriousness","reg_class","prod_fmly_nm","US_CAN","US_CAN",
-                                 "issue_status","issue_age","Late?","iss_cls_oper_id","iss_stat_esig_id",	"jnj_aware_dt",
-                                 "cat_desc","iss_cls_dt","cyc_time_init","iss_entrd_gcc","issue_from","iss_reopen_dt",
-                                 "prod_mfg","owner","issue_cntry",	"iss_entrd_pqms"],
-    
-    'McNeil': ["tracking_no_link","Dup","Number","owner_grp","seriousness","reg_class",	
-                                 "prod_fmly_nm","US_CAN","US_CAN","issue_status","issue_age","Late?",	"iss_cls_oper_id",
-                                 "iss_stat_esig_id","jnj_aware_dt",	"cat_desc",	"iss_cls_dt",
-                                 "cyc_time_init","iss_entrd_gcc","issue_from","iss_reopen_dt","iss_entrd_pqms","fmly_lvl2_desc"]
+    'NA': [...],  # Add your specific NA fields here
+    'APAC': [...],  # Same
+    'EMEA': [...],
+    'LATAM': [...],
+    'McNeil': [...]
 }
 
+# Previous month
+def get_previous_month():
+    today = datetime.today()
+    last_month = today.replace(day=1) - timedelta(days=1)
+    return last_month.strftime('%m/%d/%Y')
 
-# Add Priority column
-df['Priority'] = df['seriousness'].apply(assign_priority)
-df = df.sort_values(by=['tracking_no_link', 'Priority'])
-df = df.drop_duplicates(subset='tracking_no_link', keep='first')
-
-# Process the data
-df_filtered = processed_data(df)
-
-# Add Late? column
-df_filtered['Late?'] = np.where(df_filtered['adjusted_issue_age'] > 45, 'Late', 'Not Late')
-
-df_filtered['tracking_no_link'] = df_filtered['tracking_no_link'].astype(str)
-
-#Add number column
-df_filtered['Number'] = df_filtered['tracking_no_link'].str[:3]
-
-df_filtered['Dup'] = ""
-
-
-
-#Add US_CAN column
-# Function to determine country based on `prod_fmly_nm`
-def check_country(data_frame):
-    # Initialize an empty column for 'US_CAN'
-    data_frame['US_CAN'] = 'No country information found'
-    
-    # Iterate through each row and assign values based on the logic
-    for index, row in data_frame.iterrows():
-        if "CAN" in row['prod_fmly_nm']:
-            data_frame.at[index, 'US_CAN'] = "Canada"
-        elif "USA" in row['prod_fmly_nm']:
-            data_frame.at[index, 'US_CAN'] = "USA"
-        elif "AP" in row['prod_fmly_nm']:
-            data_frame.at[index, 'US_CAN'] = "APAC"
-        elif "CA" in row['prod_fmly_nm']:
-            data_frame.at[index, 'US_CAN'] = "Canada"
-        elif "NA" in row['prod_fmly_nm']:
-            data_frame.at[index, 'US_CAN'] = "Canada"
-        elif "EU" in row['prod_fmly_nm']:
-            data_frame.at[index, 'US_CAN'] = "EMEA"
-        elif "SA" in row['prod_fmly_nm']:
-            data_frame.at[index, 'US_CAN'] = "USA"
-    
-    # Return the modified DataFrame
-    return data_frame
-df_filtered = check_country(df_filtered)
-# Create region-specific outputs
 previous_month = get_previous_month()
+
+# Export region data
 for region, companies in regions.items():
-    region_df = df_filtered[df_filtered['company'].isin(companies)]
+    if region == 'McNeil':
+        region_df = df_filtered[df_filtered['owner_grp'].isin(companies)]
+    else:
+        region_df = df_filtered[df_filtered['company'].isin(companies)]
+    
     fields = region_fields[region]
     output_df = region_df[fields]
-    output_file = f"{region}_New_Cal_data.xlsx"
-    output_df.to_excel(output_file, index=False)
-    print(f"Region data for {region} saved to {output_file}")
+    output_df.to_excel(f"{region}_New_Cal_data.xlsx", index=False)
+    print(f"{region} data saved.")
 
-# Function to calculate numerators and denominators for different KPIs
-def calculate_kpis(df_filtered, region_companies):
-    region_df = df_filtered[df_filtered['company'].isin(region_companies)]
-    total_cases = region_df.shape[0]
-    
-    closed_early_cases = region_df[(region_df['adjusted_issue_age'] <= 45)].shape[0]
-    complaint_aging_cases = region_df[(region_df['issue_status'] == 'Open') & (region_df['issue_age'] > 365)].shape[0]
-    complaint_aging_overdue_cases = region_df[(region_df['issue_status'] == 'Open') & (region_df['issue_age'] > 45)].shape[0]
-    
-    closed_early_value = (closed_early_cases / total_cases ) if total_cases > 0 else 0
-    complaint_aging_value = (complaint_aging_cases ) if total_cases > 0 else 0
-    complaint_aging_overdue_value = (complaint_aging_overdue_cases ) if total_cases > 0 else 0
-    
-    
-    return total_cases, closed_early_cases, closed_early_value, complaint_aging_value, complaint_aging_overdue_value
+# KPI calculator
+def calculate_kpis(df_filtered, region_companies, region_name):
+    if region_name == 'McNeil':
+        region_df = df_filtered[df_filtered['owner_grp'].isin(region_companies)]
+    else:
+        region_df = df_filtered[df_filtered['company'].isin(region_companies)]
 
-# Final KPI data
-final_data = {
-    'KPI_Name': [],
-    'functionname': [],
-    'Organization': [],
-    'Month': [],
-    'Value': []
-}
+    total = region_df.shape[0]
+    closed_early = region_df[region_df['adjusted_issue_age'] <= 45].shape[0]
+    aging = region_df[(region_df['issue_status'] == 'Open') & (region_df['issue_age'] > 365)].shape[0]
+    overdue = region_df[(region_df['issue_status'] == 'Open') & (region_df['issue_age'] > 45)].shape[0]
+    closed_early_rate = closed_early / total if total else 0
+
+    return total, closed_early, closed_early_rate, aging, overdue
+
+# Collect KPI Data
+final_data = {'KPI_Name': [], 'functionname': [], 'Organization': [], 'Month': [], 'Value': []}
 
 for region, companies in regions.items():
-    total_cases, closed_early_cases, closed_early_value, complaint_aging_value, complaint_aging_overdue_value = calculate_kpis(df_filtered, companies)
-    
-    # Complaint Timeliness
-
-    final_data['KPI_Name'].extend(['Complaint Timeliness'] * 2)
-    final_data['functionname'].extend(['Denominator', 'Numerator'])
-    final_data['Organization'].extend([region] * 2)
-    final_data['Month'].extend([previous_month] * 2)
-    final_data['Value'].extend([total_cases, closed_early_cases])
-
-    # Complaint Aging
-    final_data['KPI_Name'].extend(['Complaint Aging'] * 2)
-    final_data['functionname'].extend(['Denominator', 'Numerator'])
-    final_data['Organization'].extend([region] * 2)
-    final_data['Month'].extend([previous_month] * 2)
-    final_data['Value'].extend([total_cases, complaint_aging_value])
-
-    # Complaint Aging Overdue
-    final_data['KPI_Name'].extend(['Complaint Aging Overdue'] * 2)
-    final_data['functionname'].extend(['Denominator', 'Numerator'])
-    final_data['Organization'].extend([region] * 2)
-    final_data['Month'].extend([previous_month] * 2)
-    final_data['Value'].extend([total_cases, complaint_aging_overdue_value])
+    total, early, rate, aging, overdue = calculate_kpis(df_filtered, companies, region)
+    month = previous_month
+    final_data['KPI_Name'].extend(['Complaint Timeliness', 'Complaint Timeliness',
+                                   'Complaint Aging', 'Complaint Aging',
+                                   'Complaint Aging Overdue', 'Complaint Aging Overdue'])
+    final_data['functionname'].extend(['Denominator', 'Numerator'] * 3)
+    final_data['Organization'].extend([region] * 6)
+    final_data['Month'].extend([month] * 6)
+    final_data['Value'].extend([total, early, total, aging, total, overdue])
 
 kpi_df = pd.DataFrame(final_data)
-kpi_df.to_excel("C:/Users/FEriam01/OneDrive - Kenvue/Documents/Oversight metrics/2025/April/March Data/Adjusted/final_output_PQMS_Dec_New_Calc.xlsx", index=False)
-print("KPI data saved to KPI_Data.xlsx")
+kpi_df.to_excel("C:/Users/FEriam01/OneDrive/Documents/Oversight metrics/2025/April/March Data/Adjusted/final_output_PQMS_Dec_New_Calc.xlsx", index=False)
+print("KPI data saved.")
