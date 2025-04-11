@@ -1,0 +1,164 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_pdf import PdfPages
+from datetime import datetime, timedelta
+from wordcloud import WordCloud
+
+# ------------------------------
+# LOAD DATA AND PREP
+# ------------------------------
+
+# Load data
+data = pd.read_csv("updated_complaints_data.csv", parse_dates=["Date Received", "Closed Date"])
+data['Month-Year'] = data['Date Received'].dt.to_period('M').astype(str)
+
+# Add placeholder 'Product' and 'Complaint Description' if not present
+if 'Product' not in data.columns:
+    data['Product'] = np.random.choice(['PainRelief', 'ColdCure', 'HeartHealth', 'AllergyFix', 'VitaminBoost'], size=len(data))
+if 'Complaint Description' not in data.columns:
+    data['Complaint Description'] = ["Example complaint about packaging issues"] * len(data)
+
+# Regions and metrics
+regions = ['APAC', 'EMEA', 'LATAM', 'NA']
+metrics_titles = ['Complaint Timeliness', 'Open Aging Overdue', 'Complaint Aging',
+                  'Change Log Timeliness', 'MFT Timeliness', 'Triage Timeliness']
+
+# Dynamic report title
+report_month = (datetime.today().replace(day=1) - timedelta(days=1)).strftime('%B %Y')
+report_title = f"Global CV Oversight Monthly Report - {report_month}"
+dashboard_link = "https://your-dashboard-link.com"  # Replace with actual link
+
+# ------------------------------
+# FUNCTIONS
+# ------------------------------
+
+def get_color(percentage):
+    if percentage >= 98:
+        return ['green', 'lightgray']
+    elif 95 <= percentage < 98:
+        return ['yellow', 'lightgray']
+    else:
+        return ['red', 'lightgray']
+
+def plot_doughnut(ax, early_pct, label, title):
+    late_pct = 100 - early_pct
+    colors = ['green', 'red']
+    ax.pie(
+        [early_pct, late_pct],
+        labels=[f"Early: {early_pct:.1f}%", f"Late: {late_pct:.1f}%"],
+        startangle=90,
+        counterclock=False,
+        colors=colors,
+        wedgeprops={'width': 0.3}
+    )
+    ax.set_title(f"{title}\n({label})", fontsize=10)
+
+def create_metrics(df, region):
+    region_df = df[df['Region'] == region]
+    unique_cases = region_df.drop_duplicates(subset='Tracking Number')
+
+    closed_cases = unique_cases[unique_cases['Closed Date'].notna()]
+    total_closed = closed_cases.shape[0]
+    closed_early = closed_cases[closed_cases['Issue Age'] <= 45].shape[0]
+    complaint_timeliness = (closed_early / total_closed) * 100 if total_closed > 0 else 0
+
+    open_cases = unique_cases[unique_cases['Issue Status'] == 'Open']
+    open_aging = open_cases[(open_cases['Issue Age'] > 45) & (open_cases['Issue Age'] <= 365)].shape[0]
+    complaint_aging = open_cases[open_cases['Issue Age'] > 365].shape[0]
+
+    open_aging_pct = (open_aging / total_closed) * 100 if total_closed > 0 else 0
+    complaint_aging_pct = (complaint_aging / total_closed) * 100 if total_closed > 0 else 0
+
+    mft_cases = unique_cases[unique_cases['Closure ID'] == 'Mcward']
+    mft_timeliness_pct = (mft_cases[mft_cases['Issue Age'] <= 45].shape[0] / mft_cases.shape[0] * 100) if mft_cases.shape[0] > 0 else 0
+
+    change_log_cases = unique_cases[unique_cases['Closure ID'] != 'Mcward']
+    change_log_timeliness = (change_log_cases[change_log_cases['Issue Age'] <= 45].shape[0] / change_log_cases.shape[0] * 100) if change_log_cases.shape[0] > 0 else 0
+
+    triage_cases = unique_cases[unique_cases['Process Step'].str.lower() == 'step']
+    triage_timeliness = (triage_cases[triage_cases['Issue Age'] <= 45].shape[0] / triage_cases.shape[0] * 100) if triage_cases.shape[0] > 0 else 0
+
+    return {
+        'Complaint Timeliness': complaint_timeliness,
+        'Open Aging Overdue': open_aging_pct,
+        'Complaint Aging': complaint_aging_pct,
+        'Change Log Timeliness': change_log_timeliness,
+        'MFT Timeliness': mft_timeliness_pct,
+        'Triage Timeliness': triage_timeliness
+    }
+
+# ------------------------------
+# CREATE REPORT
+# ------------------------------
+
+pdf_path = "Global_CV_Oversight_Monthly_Report_Final.pdf"
+pdf = PdfPages(pdf_path)
+
+# Title page
+fig_title = plt.figure(figsize=(11, 8.5))
+plt.axis('off')
+plt.text(0.5, 0.7, report_title, fontsize=24, ha='center', va='center', weight='bold')
+plt.text(0.5, 0.5, "See more detail:", fontsize=14, ha='center')
+plt.text(0.5, 0.45, dashboard_link, fontsize=12, ha='center', color='blue')
+pdf.savefig(fig_title)
+plt.close(fig_title)
+
+# Doughnut charts for each metric
+for metric in metrics_titles:
+    fig, axs = plt.subplots(1, 4, figsize=(14, 4))
+    fig.suptitle(f"{metric} (Doughnut Chart)", fontsize=14)
+    for i, region in enumerate(regions):
+        percentages = create_metrics(data, region)
+        pct = percentages[metric]
+        plot_doughnut(axs[i], pct, region, metric)
+    pdf.savefig(fig)
+    plt.close(fig)
+
+# Grouped bar charts
+for metric in metrics_titles:
+    month_data = []
+    months = sorted(data['Month-Year'].unique())
+    for month in months:
+        monthly = data[data['Month-Year'] == month]
+        row = {'Month-Year': month}
+        for region in regions:
+            row[region] = create_metrics(monthly, region)[metric]
+        month_data.append(row)
+
+    df_hist = pd.DataFrame(month_data).set_index("Month-Year")
+    fig, ax = plt.subplots(figsize=(14, 6))
+    bar_width = 0.2
+    index = np.arange(len(df_hist))
+    for i, region in enumerate(regions):
+        ax.bar(index + i * bar_width, df_hist[region], width=bar_width, label=region)
+
+    ax.set_title(f"Monthly Trend: {metric} (Grouped Bar Chart)")
+    ax.set_ylabel("Percentage")
+    ax.set_xticks(index + bar_width * 1.5)
+    ax.set_xticklabels(df_hist.index, rotation=90)
+    ax.legend(title="Region")
+    pdf.savefig(fig)
+    plt.close(fig)
+
+# Word clouds for top 3 products per region
+for region in regions:
+    region_df = data[data['Region'] == region]
+    top_products = region_df['Product'].value_counts().nlargest(3).index.tolist()
+    for product in top_products:
+        desc_text = " ".join(
+            str(d) for d in region_df[region_df['Product'] == product]['Complaint Description'].dropna()
+            if isinstance(d, str)
+        )
+        if desc_text.strip():
+            wc = WordCloud(width=1600, height=800, background_color='white', colormap='viridis').generate(desc_text)
+            fig_wc = plt.figure(figsize=(14, 7))
+            plt.imshow(wc, interpolation='bilinear')
+            plt.axis('off')
+            plt.title(f"Word Cloud for '{product}' in {region}", fontsize=18)
+            plt.tight_layout(pad=0)
+            pdf.savefig(fig_wc)
+            plt.close(fig_wc)
+
+pdf.close()
+print(f"Report saved to: {pdf_path}")
