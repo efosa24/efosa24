@@ -1,16 +1,177 @@
-1.	Calculate “Time in Step” by checking the difference between “Process Step Start Date” and “Process Step End Date” rounding up the two columns.
-2.	
-a.	Calculate “Device” Check if Reg class column has Device and Device II, the return Device otherwise return non-device.
-b.	Calculate “Late Device”: 
+from deep_translator import GoogleTranslator
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_pdf import PdfPages
+from wordcloud import WordCloud
+from datetime import datetime, timedelta
+from numpy import ceil
 
- By checking if Device = Device and “Time in step” is greater than 8, the return Late otherwise return Not Late
+# -------------------------
+# Load, Translate and Preprocess Data
+# -------------------------
+df = pd.read_csv("final_processed_complaints_data.csv", parse_dates=[
+    "Date Received", "Closed Date", "Date Entered", "Insert Date",
+    "Process Step Start Date", "Process Step End Date"
+])
+df['Complaint Description'] = df['Complaint Description'].astype(str).fillna('')
+df['Complaint Description Translated'] = df['Complaint Description'].apply(
+    lambda x: GoogleTranslator(source='auto', target='en').translate(x) if x.strip() else x
+)
+df['Month-Year'] = df['Date Received'].dt.to_period('M').astype(str)
 
-3.	Calculate “Serious” to determine the cases that priority or non-priority.
-If Seriousness =Priority or Serious AE then return “Priority” otherwise return “Non-priority”.
-a.	Calculate “Late Priority”, If Device = Device and Serious = Priority, then Time in Step greater than 2 then return Late otherwise not late.
-b.	Calculate “Late Non-Priority” if Device = Device, Priority = Non-Priority or Owner group = Forte Washington, Lancaster, Las Piedras, McNeil EM Investigator, McNeil US OTC Home Office and Time in Step greater than 4 return Late, otherwise Not Late
-4.	Late 10 Days
-If Time in step is greater than 10 then return Late, otherwise return Not Late
+# Classification and transformation logic
+df['Time in Step'] = (df['Process Step End Date'] - df['Process Step Start Date']).dt.days
+df['Time in Step'] = df['Time in Step'].apply(lambda x: ceil(x) if pd.notnull(x) else None)
+df['Device Type'] = df['Reg Class'].apply(lambda x: 'Device' if isinstance(x, str) and ('Device' in x) else 'Non-device')
+df['Serious'] = df['Seriousness'].apply(lambda x: 'Priority' if str(x).strip() in ['Priority', 'Serious AE'] else 'Non-priority')
+owner_group_late_list = ['Forte Washington', 'Lancaster', 'Las Piedras', 'McNeil EM Investigator', 'McNeil US OTC Home Office']
 
-5.	Late= Final Column to determine cases that are Late
-If Device = Late, Late Priority = Late, Late Non-Priority = Late, Last in 10 Days = Late, then return Late otherwise return Not late.
+df['Late Device'] = ((df['Device Type'] == 'Device') & (df['Time in Step'] > 8)).map({True: 'Late', False: 'Not Late'})
+df['Late Priority'] = ((df['Device Type'] == 'Device') & (df['Serious'] == 'Priority') & (df['Time in Step'] > 2)).map({True: 'Late', False: 'Not Late'})
+df['Late Non-Priority'] = ((df['Device Type'] == 'Device') &
+    ((df['Serious'] == 'Non-priority') | (df['Owner Group'].isin(owner_group_late_list))) &
+    (df['Time in Step'] > 4)).map({True: 'Late', False: 'Not Late'})
+df['Late 10 Days'] = (df['Time in Step'] > 10).map({True: 'Late', False: 'Not Late'})
+df['Triage Late'] = ((df['Late Device'] == 'Late') | (df['Late Priority'] == 'Late') |
+                     (df['Late Non-Priority'] == 'Late') | (df['Late 10 Days'] == 'Late')).map({True: 'Late', False: 'Not Late'})
+
+df['MFT Time Diff'] = (df['Insert Date'] - df['Date Entered']).dt.days
+df['MFT Late'] = df['MFT Time Diff'].apply(lambda x: 'Late' if pd.notnull(x) and x > 10 else 'Not Late')
+
+def calculate_changelog_late(row):
+    if pd.isnull(row['Closed Date']) or pd.isnull(row['Date Entered']):
+        return 'Not Late'
+    date_diff = (row['Closed Date'].ceil('D') - row['Date Entered'].ceil('D')).days
+    if str(row['Seriousness']).strip() in ['Priority', 'Serious AE']:
+        return 'Late' if date_diff > 2 else 'Not Late'
+    return 'Late' if date_diff > 4 else 'Not Late'
+
+df['Change Log Late'] = df.apply(calculate_changelog_late, axis=1)
+
+# Regions and metrics
+regions = ['APAC', 'EMEA', 'LATAM', 'NA']
+metrics_titles = ['Complaint Timeliness', 'Open Aging Overdue', 'Complaint Aging',
+                  'Change Log Timeliness', 'MFT Timeliness', 'Triage Timeliness']
+
+# Reporting logic
+def calculate_dates_for_previous_month():
+    today = datetime.now()
+    first_day_this_month = today.replace(day=1)
+    last_day_previous_month = first_day_this_month - timedelta(days=1)
+    prev_month = last_day_previous_month.month
+    prev_year = last_day_previous_month.year
+    start_date = datetime(prev_year, prev_month, 1)
+    while start_date.month == prev_month:
+        end_date = start_date + timedelta(days=27)
+        next_month_start = (end_date + timedelta(days=1)).replace(day=1)
+        days_remaining = (next_month_start - end_date - timedelta(days=1)).days
+        if days_remaining == 7:
+            end_date += timedelta(days=days_remaining)
+        return start_date - timedelta(days=45), end_date - timedelta(days=45)
+
+def extract_data_for_previous_month(df):
+    start_date, end_date = calculate_dates_for_previous_month()
+    return df[(df['Date Entered'] >= start_date) & (df['Date Entered'] <= end_date)]
+
+filtered_df = extract_data_for_previous_month(df)
+filtered_start, filtered_end = calculate_dates_for_previous_month()
+report_title = f"Global CV Oversight Monthly Report - {filtered_end.strftime('%B %Y')}"
+title_range_str = f"Data Period: {filtered_start.strftime('%b %d, %Y')} to {filtered_end.strftime('%b %d, %Y')}"
+dashboard_link = "https://your-dashboard-link.com"
+
+def updated_create_metrics(df, region):
+    df = df[df['Region'] == region].drop_duplicates(subset='Tracking Number')
+    closed = df[df['Closed Date'].notna()]
+    total_closed = closed.shape[0]
+    closed_early = closed[closed['Issue Age'] <= 45].shape[0]
+    complaint_timeliness = (closed_early / total_closed * 100) if total_closed > 0 else 0
+
+    open_cases = df[df['Issue Status'] == 'Open']
+    open_aging = open_cases[(open_cases['Issue Age'] > 45) & (open_cases['Issue Age'] <= 365)].shape[0]
+    complaint_aging = open_cases[open_cases['Issue Age'] > 365].shape[0]
+    open_aging_pct = (open_aging / total_closed * 100) if total_closed > 0 else 0
+    complaint_aging_pct = (complaint_aging / total_closed * 100) if total_closed > 0 else 0
+
+    mft = df[df['Closure ID'] == 'Mcward']
+    mft_late_pct = (mft[mft['MFT Late'] == 'Late'].shape[0] / len(mft) * 100) if len(mft) > 0 else 0
+
+    changelog = df[df['Closure ID'] != 'Mcward']
+    changelog_late_pct = (changelog[changelog['Change Log Late'] == 'Late'].shape[0] / len(changelog) * 100) if len(changelog) > 0 else 0
+
+    triage = df[df['Process Step'].str.lower() == 'step']
+    triage_late_pct = (triage[triage['Triage Late'] == 'Late'].shape[0] / len(triage) * 100) if len(triage) > 0 else 0
+
+    return {
+        'Complaint Timeliness': complaint_timeliness,
+        'Open Aging Overdue': open_aging_pct,
+        'Complaint Aging': complaint_aging_pct,
+        'Change Log Timeliness': 100 - changelog_late_pct,
+        'MFT Timeliness': 100 - mft_late_pct,
+        'Triage Timeliness': 100 - triage_late_pct
+    }
+
+def plot_doughnut(ax, early_pct, label, title):
+    late_pct = 100 - early_pct
+    ax.pie([early_pct, late_pct],
+           labels=[f"On-Time: {early_pct:.1f}%", f"Late: {late_pct:.1f}%"],
+           startangle=90, counterclock=False,
+           colors=['green', 'red'],
+           wedgeprops={'width': 0.3})
+    ax.set_title(f"{title}\n({label})", fontsize=10)
+
+# Generate Report
+pdf_path = "Final_Global_CV_Report_With_Translation.pdf"
+pdf = PdfPages(pdf_path)
+
+fig_title = plt.figure(figsize=(11, 8.5))
+plt.axis('off')
+plt.text(0.5, 0.75, report_title, fontsize=24, ha='center', weight='bold')
+plt.text(0.5, 0.6, title_range_str, fontsize=14, ha='center')
+plt.text(0.5, 0.45, "See more detail:", fontsize=14, ha='center')
+plt.text(0.5, 0.4, dashboard_link, fontsize=12, ha='center', color='blue')
+pdf.savefig(fig_title)
+plt.close(fig_title)
+
+for metric in metrics_titles:
+    fig, axs = plt.subplots(1, 4, figsize=(14, 4))
+    fig.suptitle(f"{metric} (Updated Logic)", fontsize=14)
+    for i, region in enumerate(regions):
+        pct = updated_create_metrics(filtered_df, region)[metric]
+        plot_doughnut(axs[i], pct, region, metric)
+    pdf.savefig(fig)
+    plt.close(fig)
+
+# Monthly Complaint Volume
+vol_df = filtered_df.groupby(['Month-Year', 'Region'])['Tracking Number'].count().reset_index()
+pivot_vol = vol_df.pivot(index='Month-Year', columns='Region', values='Tracking Number').fillna(0)
+fig, ax = plt.subplots(figsize=(14, 6))
+index = np.arange(len(pivot_vol))
+bar_width = 0.2
+for i, region in enumerate(regions):
+    ax.bar(index + i * bar_width, pivot_vol[region], width=bar_width, label=region)
+ax.set_title("Monthly Complaint Volume by Region")
+ax.set_ylabel("Number of Complaints")
+ax.set_xticks(index + bar_width * 1.5)
+ax.set_xticklabels(pivot_vol.index, rotation=90)
+ax.legend()
+pdf.savefig(fig)
+plt.close(fig)
+
+# Word Clouds using translated descriptions
+for region in regions:
+    region_df = filtered_df[filtered_df['Region'] == region]
+    top_products = region_df['Product'].value_counts().nlargest(3).index.tolist()
+    for product in top_products:
+        desc_text = " ".join(region_df[region_df['Product'] == product]['Complaint Description Translated'].dropna().astype(str))
+        if desc_text.strip():
+            wc = WordCloud(width=1600, height=800, background_color='white').generate(desc_text)
+            fig_wc = plt.figure(figsize=(14, 7))
+            plt.imshow(wc, interpolation='bilinear')
+            plt.axis('off')
+            plt.title(f"Word Cloud for '{product}' in {region}", fontsize=18)
+            pdf.savefig(fig_wc)
+            plt.close(fig_wc)
+
+pdf.close()
+print(f"✅ Report saved to: {pdf_path}")
