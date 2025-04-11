@@ -1,75 +1,16 @@
-import pandas as pd
-import matplotlib.pyplot as plt
-import numpy as np
-import matplotlib.cm as cm
+1.	Calculate “Time in Step” by checking the difference between “Process Step Start Date” and “Process Step End Date” rounding up the two columns.
+2.	
+a.	Calculate “Device” Check if Reg class column has Device and Device II, the return Device otherwise return non-device.
+b.	Calculate “Late Device”: 
 
-# Sample DataFrame (replace with your actual data)
-data = {
-    'Date': [
-        '2024-01-15', '2024-01-20', '2024-02-10', '2024-02-12',
-        '2024-03-05', '2024-03-10', '2024-01-25', '2024-02-25',
-        '2024-03-15', '2024-03-20', '2024-02-02', '2024-01-30',
-        '2024-03-01', '2024-02-01', '2024-01-10'
-    ],
-    'Category': [
-        'Packaging', 'Quality', 'Delivery', 'Quality',
-        'Packaging', 'Delivery', 'Packaging', 'Delivery',
-        'Quality', 'Quality', 'Packaging', 'Delivery',
-        'Packaging', 'Quality', 'Packaging'
-    ]
-}
+ By checking if Device = Device and “Time in step” is greater than 8, the return Late otherwise return Not Late
 
-# Convert to DataFrame
-df = pd.DataFrame(data)
-df['Date'] = pd.to_datetime(df['Date'])
+3.	Calculate “Serious” to determine the cases that priority or non-priority.
+If Seriousness =Priority or Serious AE then return “Priority” otherwise return “Non-priority”.
+a.	Calculate “Late Priority”, If Device = Device and Serious = Priority, then Time in Step greater than 2 then return Late otherwise not late.
+b.	Calculate “Late Non-Priority” if Device = Device, Priority = Non-Priority or Owner group = Forte Washington, Lancaster, Las Piedras, McNeil EM Investigator, McNeil US OTC Home Office and Time in Step greater than 4 return Late, otherwise Not Late
+4.	Late 10 Days
+If Time in step is greater than 10 then return Late, otherwise return Not Late
 
-# Drop duplicates
-df = df.drop_duplicates()
-
-# Extract Month-Year
-df['MonthYear'] = df['Date'].dt.strftime('%b-%Y')
-
-# Identify top 5 complaint categories by total count
-top_categories = df['Category'].value_counts().nlargest(5).index.tolist()
-
-# Filter to only include top 5 categories
-df = df[df['Category'].isin(top_categories)]
-
-# Group and pivot
-grouped = df.groupby(['MonthYear', 'Category']).size().unstack(fill_value=0)
-
-# Sort MonthYear as datetime
-grouped.index = pd.to_datetime(grouped.index, format='%b-%Y')
-grouped = grouped.sort_index()
-grouped.index = grouped.index.strftime('%b-%Y')
-
-# Plotting
-categories = grouped.columns
-months = grouped.index
-x = np.arange(len(months))
-width = 0.15
-
-# Professional color palette
-colors = cm.get_cmap('Set2', len(categories)).colors
-
-fig, ax = plt.subplots(figsize=(12, 6))
-
-for i, category in enumerate(categories):
-    ax.bar(x + i * width, grouped[category], width, label=category, color=colors[i])
-
-# Labels and title
-ax.set_xlabel('Month-Year')
-ax.set_ylabel('Number of Complaints')
-ax.set_title('Top 5 Complaint Categories Over Time')
-ax.set_xticks(x + width * (len(categories)-1)/2)
-ax.set_xticklabels(months, rotation=45)
-ax.legend(title="Category")
-ax.grid(True, linestyle='--', alpha=0.5)
-
-plt.tight_layout()
-
-# Save as PDF
-plt.savefig("complaint_categories.pdf", format="pdf")
-plt.close()
-
-print("Bar chart saved as 'complaint_categories.pdf'")
+5.	Late= Final Column to determine cases that are Late
+If Device = Late, Late Priority = Late, Late Non-Priority = Late, Last in 10 Days = Late, then return Late otherwise return Not late.
