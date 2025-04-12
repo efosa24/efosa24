@@ -188,3 +188,27 @@ for region in regions:
             plt.close(fig_wc)
 
 pdf.close()
+
+
+
+import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_pdf import PdfPages
+from wordcloud import WordCloud
+from datetime import datetime, timedelta
+from numpy import ceil
+from deep_translator import GoogleTranslator
+from PyPDF2 import PdfReader, PdfWriter
+
+# Load dataset
+df = pd.read_csv("updated_complaints_metrics_data.csv", parse_dates=[
+    "Date Received", "Closed Date", "Date Entered", "Insert Date",
+    "Process Step Start Date", "Process Step End Date"
+])
+df['Complaint Description'] = df['Complaint Description'].astype(str).fillna('')
+df['Complaint Description Translated'] = df['Complaint Description'].apply(
+    lambda x: GoogleTranslator(source='auto', target='en').translate(x) if x.strip() else x
+)
+df['Tracking Number'] = df['Tracking Number'].astype(str)
+df['Region'] = df['Region'].fillna('Unknown')
+df['Month-Year'] = df['Date Received'].dt.to_period('M').astype(str)
