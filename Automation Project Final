@@ -1,0 +1,153 @@
+
+import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_pdf import PdfPages
+from wordcloud import WordCloud
+from datetime import datetime, timedelta
+from numpy import ceil
+
+# -----------------------------
+# 1. FINANCIAL DATE LOGIC
+# -----------------------------
+def calculate_custom_dates(base_date="2024-12-30"):
+    start = datetime.strptime(base_date, "%Y-%m-%d")
+    end = start + timedelta(days=27)
+    next_month_start = (end + timedelta(days=1)).replace(day=1)
+    days_left = (next_month_start - end - timedelta(days=1)).days
+    if days_left == 7:
+        end += timedelta(days=7)
+    adjusted_start = start - timedelta(days=45)
+    adjusted_end = end - timedelta(days=45)
+    return adjusted_start, adjusted_end, start, end
+
+adj_start, adj_end, raw_start, raw_end = calculate_custom_dates("2024-12-30")
+
+# -----------------------------
+# 2. LOAD AND PREPROCESS DATA
+# -----------------------------
+df = pd.read_csv("updated_complaints_metrics_data.csv", parse_dates=[
+    "Date Received", "Closed Date", "Date Entered", "Insert Date",
+    "Process Step Start Date", "Process Step End Date"
+])
+df['Complaint Description'] = df['Complaint Description'].astype(str).fillna('')
+df['Tracking Number'] = df['Tracking Number'].astype(str)
+df['Region'] = df['Region'].fillna('Unknown')
+df['Month-Year'] = df['Date Received'].dt.to_period('M').astype(str)
+
+# Timeliness logic
+df['Time in Step'] = (df['Process Step End Date'] - df['Process Step Start Date']).dt.days
+df['Time in Step'] = df['Time in Step'].apply(lambda x: ceil(x) if pd.notnull(x) else None)
+df['Device Type'] = df['Reg Class'].apply(lambda x: 'Device' if isinstance(x, str) and 'Device' in x else 'Non-device')
+df['Serious'] = df['Seriousness'].apply(lambda x: 'Priority' if str(x).strip() in ['Priority', 'Serious AE'] else 'Non-priority')
+
+owner_group_late_list = ['Forte Washington', 'Lancaster', 'Las Piedras', 'McNeil EM Investigator', 'McNeil US OTC Home Office']
+df['Late Device'] = ((df['Device Type'] == 'Device') & (df['Time in Step'] > 8)).map({True: 'Late', False: 'Not Late'})
+df['Late Priority'] = ((df['Device Type'] == 'Device') & (df['Serious'] == 'Priority') & (df['Time in Step'] > 2)).map({True: 'Late', False: 'Not Late'})
+df['Late Non-Priority'] = ((df['Device Type'] == 'Device') &
+    ((df['Serious'] == 'Non-priority') | (df['Owner Group'].isin(owner_group_late_list))) &
+    (df['Time in Step'] > 4)).map({True: 'Late', False: 'Not Late'})
+df['Late 10 Days'] = (df['Time in Step'] > 10).map({True: 'Late', False: 'Not Late'})
+
+df['Triage Late'] = ((df['Late Device'] == 'Late') |
+                     (df['Late Priority'] == 'Late') |
+                     (df['Late Non-Priority'] == 'Late') |
+                     (df['Late 10 Days'] == 'Late')).map({True: 'Late', False: 'Not Late'})
+
+df['MFT Time Diff'] = (df['Insert Date'] - df['Date Entered']).dt.days
+df['MFT Late'] = df['MFT Time Diff'].apply(lambda x: 'Late' if pd.notnull(x) and x > 10 else 'Not Late')
+
+def calculate_changelog_late(row):
+    if pd.isnull(row['Closed Date']) or pd.isnull(row['Date Entered']):
+        return 'Not Late'
+    date_diff = (row['Closed Date'].ceil('D') - row['Date Entered'].ceil('D')).days
+    if str(row['Seriousness']).strip() in ['Priority', 'Serious AE']:
+        return 'Late' if date_diff > 2 else 'Not Late'
+    return 'Late' if date_diff > 4 else 'Not Late'
+
+df['Change Log Late'] = df.apply(calculate_changelog_late, axis=1)
+df['Complaint Description Translated'] = df['Complaint Description'].apply(lambda x: x + " (EN)" if x.strip() else x)
+
+# -----------------------------
+# 3. DEFINE METRICS
+# -----------------------------
+regions = ['APAC', 'EMEA', 'LATAM', 'NA']
+metrics = {
+    'Complaint Timeliness': lambda df: df[df['Closed Date'].notna()],
+    'Change Log Timeliness': lambda df: df[df['Closure ID'] != 'Mcward'],
+    'MFT Timeliness': lambda df: df[df['Closure ID'] == 'Mcward'],
+    'Triage Timeliness': lambda df: df[df['Process Step'].str.lower() == 'step']
+}
+late_logic = {
+    'Complaint Timeliness': lambda df: df['Issue Age'] > 45,
+    'Change Log Timeliness': lambda df: df['Change Log Late'] == 'Late',
+    'MFT Timeliness': lambda df: df['MFT Late'] == 'Late',
+    'Triage Timeliness': lambda df: df['Triage Late'] == 'Late'
+}
+
+# -----------------------------
+# 4. CHART FUNCTIONS
+# -----------------------------
+def draw_doughnut_summary(df, metric, pdf):
+    fig, axs = plt.subplots(2, 4, figsize=(16, 6))
+    fig.suptitle(f"{metric} - Summary and Doughnut Charts", fontsize=14)
+    for i, region in enumerate(regions):
+        region_df = df[df['Region'] == region].drop_duplicates(subset='Tracking Number')
+        metric_df = metrics[metric](region_df)
+        late_cond = late_logic[metric](metric_df)
+        late = metric_df[late_cond].shape[0]
+        on_time = metric_df[~late_cond].shape[0]
+        total = on_time + late
+        early_pct = (on_time / total * 100) if total else 0
+        late_pct = 100 - early_pct
+        axs[0, i].axis('off')
+        axs[0, i].text(0.5, 0.7, f"{region}", ha='center')
+        axs[0, i].text(0.5, 0.5, f"Total: {total}", ha='center')
+        axs[0, i].text(0.5, 0.3, f"On-Time: {on_time}", ha='center')
+        axs[0, i].text(0.5, 0.1, f"Late: {late}", ha='center')
+        colors = ['green', 'red'] if early_pct >= 98 else ['yellow', 'red'] if early_pct >= 95 else ['red', 'darkred']
+        axs[1, i].pie([early_pct, late_pct], labels=[f"On-Time {early_pct:.1f}%", f"Late {late_pct:.1f}%"],
+                      startangle=90, counterclock=False, colors=colors, wedgeprops={'width': 0.3})
+    pdf.savefig(fig)
+    plt.close(fig)
+
+# -----------------------------
+# 5. GENERATE PDF
+# -----------------------------
+pdf = PdfPages("Final_Complaint_Metrics_Report.pdf")
+
+# Title Page
+fig = plt.figure(figsize=(11, 8.5))
+plt.axis('off')
+plt.text(0.5, 0.75, f"Global CV Oversight Monthly Report - {raw_end.strftime('%B %Y')}", ha='center', fontsize=24, weight='bold')
+plt.text(0.5, 0.6, f"Data Period: {adj_start.strftime('%b %d, %Y')} to {adj_end.strftime('%b %d, %Y')}", ha='center', fontsize=14)
+plt.text(0.5, 0.4, "More Details in Dashboard", fontsize=12, ha='center', color='blue')
+plt.text(0.5, 0.36, "https://your-dashboard-link.com", fontsize=10, ha='center', color='blue')
+pdf.savefig(fig)
+plt.close(fig)
+
+# Charts
+for metric in metrics:
+    if metric == 'Complaint Timeliness':
+        filtered_df = df[(df['Date Entered'] >= adj_start) & (df['Date Entered'] <= adj_end)]
+        draw_doughnut_summary(filtered_df, metric, pdf)
+    else:
+        raw_df = df[(df['Date Entered'] >= raw_start) & (df['Date Entered'] <= raw_end)]
+        draw_doughnut_summary(raw_df, metric, pdf)
+
+# Word Clouds
+for region in regions:
+    top_products = df[df['Region'] == region]['Product'].value_counts().nlargest(3).index.tolist()
+    for product in top_products:
+        desc = df[(df['Region'] == region) & (df['Product'] == product)]['Complaint Description Translated']
+        text = " ".join(desc)
+        if text.strip():
+            wc = WordCloud(width=1600, height=800, background_color='white').generate(text)
+            fig = plt.figure(figsize=(14, 7))
+            plt.imshow(wc, interpolation='bilinear')
+            plt.axis('off')
+            plt.title(f"Word Cloud - {region} - {product}", fontsize=18)
+            pdf.savefig(fig)
+            plt.close(fig)
+
+pdf.close()
+print("✅ Final report generated successfully.")
