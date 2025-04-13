@@ -9,18 +9,28 @@ from numpy import ceil
 # -----------------------------
 # 1. FINANCIAL DATE LOGIC
 # -----------------------------
-def calculate_custom_dates(base_date="2024-12-30"):
+def calculate_financial_period(base_date="2024-12-30", target_month=None):
     start = datetime.strptime(base_date, "%Y-%m-%d")
-    end = start + timedelta(days=27)
-    next_month_start = (end + timedelta(days=1)).replace(day=1)
-    days_left = (next_month_start - end - timedelta(days=1)).days
-    if days_left == 7:
-        end += timedelta(days=7)
-    adjusted_start = start - timedelta(days=45)
-    adjusted_end = end - timedelta(days=45)
-    return adjusted_start, adjusted_end, start, end
+    while True:
+        base_end = start + timedelta(days=27)
+        test_five_week_end = base_end + timedelta(days=7)
 
-adj_start, adj_end, raw_start, raw_end = calculate_custom_dates("2024-12-30")
+        # Extend if still in same calendar month as base_end
+        if test_five_week_end.month == base_end.month:
+            end = test_five_week_end
+        else:
+            end = base_end
+
+        adjusted_start = start - timedelta(days=45)
+        adjusted_end = end - timedelta(days=45)
+
+        if not target_month or (start.strftime("%Y-%m") == target_month or end.strftime("%Y-%m") == target_month):
+            return adjusted_start, adjusted_end, start, end
+
+        start = end + timedelta(days=1)
+
+# Example usage in script:
+adj_start, adj_end, raw_start, raw_end = calculate_financial_period("2024-12-30")
 
 # -----------------------------
 # 2. LOAD AND PREPROCESS DATA
