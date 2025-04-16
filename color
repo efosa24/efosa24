@@ -9,91 +9,115 @@ from xgboost import XGBRegressor
 from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from prophet import Prophet
+import os
 
-# ----------------------------------------
-# 1. Load Data
-# ----------------------------------------
-df = pd.read_csv("updated_complaints_data.csv")  # Replace with your local path
+# -------------------------
+# 1. Load and Clean Data
+# -------------------------
+df = pd.read_csv("updated_complaints_data.csv")
 df['Date Received'] = pd.to_datetime(df['Date Received'], errors='coerce')
-df = df.dropna(subset=['Date Received', 'Product', 'Region', 'Complaint Description'])
 
-# ----------------------------------------
-# 2. EDA (Exploratory Data Analysis)
-# ----------------------------------------
+# Ensure essential columns exist
+required_cols = ['Date Received', 'Product', 'Region', 'Complaint Description']
+available_cols = df.columns.tolist()
+optional_cols = [col for col in ['Reg Class', 'Manufacturer'] if col in available_cols]
+
+df = df.dropna(subset=required_cols)
 df['Month'] = df['Date Received'].dt.to_period('M').dt.to_timestamp()
 df['Complaint Count'] = 1
 
-# Monthly total volume
+# -------------------------
+# 2. EDA Charts
+# -------------------------
+sns.set(style="whitegrid")
+
+# Overall monthly trend
 monthly_data = df.groupby('Month').agg({'Tracking Number': 'count'}).reset_index()
 monthly_data.rename(columns={'Tracking Number': 'Complaint Count'}, inplace=True)
+ts_data = monthly_data.set_index('Month')
 
-# Plot monthly trend
 plt.figure(figsize=(12, 5))
 sns.lineplot(data=monthly_data, x='Month', y='Complaint Count', marker='o')
 plt.title("Monthly Complaint Volume")
 plt.xticks(rotation=45)
-plt.grid(True)
 plt.tight_layout()
 plt.savefig("eda_monthly_volume.png")
+plt.close()
 
-# By Region
+# Region
 plt.figure(figsize=(12, 5))
-region_monthly = df.groupby(['Month', 'Region'])['Complaint Count'].sum().reset_index()
-sns.lineplot(data=region_monthly, x='Month', y='Complaint Count', hue='Region', marker='o')
+sns.lineplot(data=df.groupby(['Month', 'Region'])['Complaint Count'].sum().reset_index(),
+             x='Month', y='Complaint Count', hue='Region', marker='o')
 plt.title("Monthly Complaint Volume by Region")
 plt.xticks(rotation=45)
 plt.tight_layout()
 plt.savefig("eda_by_region.png")
+plt.close()
 
-# By Product
+# Product
 plt.figure(figsize=(12, 5))
-product_monthly = df.groupby(['Month', 'Product'])['Complaint Count'].sum().reset_index()
-sns.lineplot(data=product_monthly, x='Month', y='Complaint Count', hue='Product', marker='o')
+sns.lineplot(data=df.groupby(['Month', 'Product'])['Complaint Count'].sum().reset_index(),
+             x='Month', y='Complaint Count', hue='Product', marker='o')
 plt.title("Monthly Complaint Volume by Product")
 plt.xticks(rotation=45)
 plt.tight_layout()
 plt.savefig("eda_by_product.png")
+plt.close()
 
-# By Complaint Description
+# Complaint Description
 plt.figure(figsize=(12, 5))
-desc_monthly = df.groupby(['Month', 'Complaint Description'])['Complaint Count'].sum().reset_index()
-sns.lineplot(data=desc_monthly, x='Month', y='Complaint Count', hue='Complaint Description', marker='o')
-plt.title("Monthly Complaint Volume by Complaint Description")
+sns.lineplot(data=df.groupby(['Month', 'Complaint Description'])['Complaint Count'].sum().reset_index(),
+             x='Month', y='Complaint Count', hue='Complaint Description', marker='o')
+plt.title("Monthly Complaint Volume by Description")
 plt.xticks(rotation=45)
 plt.tight_layout()
 plt.savefig("eda_by_description.png")
+plt.close()
 
-# ----------------------------------------
+# Optional: Reg Class
+if 'Reg Class' in df.columns:
+    plt.figure(figsize=(12, 5))
+    sns.lineplot(data=df.groupby(['Month', 'Reg Class'])['Complaint Count'].sum().reset_index(),
+                 x='Month', y='Complaint Count', hue='Reg Class', marker='o')
+    plt.title("Monthly Complaint Volume by Reg Class")
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.savefig("eda_by_regclass.png")
+    plt.close()
+
+# Optional: Manufacturer
+if 'Manufacturer' in df.columns:
+    plt.figure(figsize=(12, 5))
+    sns.lineplot(data=df.groupby(['Month', 'Manufacturer'])['Complaint Count'].sum().reset_index(),
+                 x='Month', y='Complaint Count', hue='Manufacturer', marker='o')
+    plt.title("Monthly Complaint Volume by Manufacturer")
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.savefig("eda_by_manufacturer.png")
+    plt.close()
+
+# -------------------------
 # 3. Prepare Data for Forecasting
-# ----------------------------------------
-ts_data = monthly_data.set_index('Month')
+# -------------------------
+ml_group_cols = ['Month', 'Product', 'Region', 'Complaint Description'] + optional_cols
+ml_data = df.groupby(ml_group_cols)['Complaint Count'].sum().reset_index()
 
-# Prepare ML feature set
-ml_data = df.groupby(['Month', 'Product', 'Region', 'Complaint Description'])['Complaint Count'].sum().reset_index()
-for col in ['Product', 'Region', 'Complaint Description']:
+# Encode categoricals
+categorical_cols = [col for col in ml_group_cols if col != 'Month']
+for col in categorical_cols:
     ml_data[col] = LabelEncoder().fit_transform(ml_data[col])
 
+# Define X and y
 X = ml_data.drop(columns=['Complaint Count'])
 y = ml_data['Complaint Count']
-
 X_train = X[X['Month'] < '2024-01-01'].drop(columns=['Month'])
 X_test = X[X['Month'] >= '2024-01-01'].drop(columns=['Month'])
 y_train = y[X['Month'] < '2024-01-01']
 y_test = y[X['Month'] >= '2024-01-01']
 
-# ----------------------------------------
+# -------------------------
 # 4. Train Forecasting Models
-# ----------------------------------------
-# Random Forest
-rf = RandomForestRegressor(n_estimators=100, random_state=42)
-rf.fit(X_train, y_train)
-rf_preds = rf.predict(X_test)
-
-# XGBoost
-xgb = XGBRegressor(n_estimators=100, random_state=42)
-xgb.fit(X_train, y_train)
-xgb_preds = xgb.predict(X_test)
-
+# -------------------------
 # Prophet
 prophet_df = ts_data.reset_index().rename(columns={'Month': 'ds', 'Complaint Count': 'y'})
 prophet = Prophet()
@@ -101,9 +125,71 @@ prophet.fit(prophet_df)
 future = prophet.make_future_dataframe(periods=12, freq='M')
 forecast_prophet = prophet.predict(future)
 
-# ----------------------------------------
-# 5. Evaluation Metrics
-# ----------------------------------------
+# Random Forest
+rf = RandomForestRegressor(n_estimators=100, random_state=42)
+rf.fit(X_train, y_train)
+rf_preds = rf.predict(X_test)
+rf_resid = y_test - rf_preds
+
+# XGBoost
+xgb = XGBRegressor(n_estimators=100, random_state=42)
+xgb.fit(X_train, y_train)
+xgb_preds = xgb.predict(X_test)
+xgb_resid = y_test - xgb_preds
+
+# Prophet residuals
+prophet_pred = forecast_prophet.loc[:len(prophet_df)-1, 'yhat']
+prophet_resid = prophet_df['y'] - prophet_pred
+
+# -------------------------
+# 5. Forecast and Residual Visualizations
+# -------------------------
+fig, axs = plt.subplots(3, 2, figsize=(18, 16))
+fig.suptitle("Forecasts and Residual Errors", fontsize=18)
+
+# Prophet Forecast
+axs[0, 0].plot(prophet_df['ds'], prophet_df['y'], label='Observed')
+axs[0, 0].plot(forecast_prophet['ds'], forecast_prophet['yhat'], label='Forecast')
+axs[0, 0].set_title("Prophet Forecast")
+axs[0, 0].legend()
+axs[0, 0].grid(True)
+
+# Prophet Residuals
+axs[0, 1].plot(prophet_df['ds'], prophet_resid)
+axs[0, 1].set_title("Prophet Residuals")
+axs[0, 1].grid(True)
+
+# RF Forecast
+axs[1, 0].plot(y_test.index, y_test.values, label='Observed')
+axs[1, 0].plot(y_test.index, rf_preds, label='RF Predicted')
+axs[1, 0].set_title("Random Forest Forecast")
+axs[1, 0].legend()
+axs[1, 0].grid(True)
+
+# RF Residuals
+axs[1, 1].plot(y_test.index, rf_resid)
+axs[1, 1].set_title("Random Forest Residuals")
+axs[1, 1].grid(True)
+
+# XGB Forecast
+axs[2, 0].plot(y_test.index, y_test.values, label='Observed')
+axs[2, 0].plot(y_test.index, xgb_preds, label='XGB Predicted')
+axs[2, 0].set_title("XGBoost Forecast")
+axs[2, 0].legend()
+axs[2, 0].grid(True)
+
+# XGB Residuals
+axs[2, 1].plot(y_test.index, xgb_resid)
+axs[2, 1].set_title("XGBoost Residuals")
+axs[2, 1].grid(True)
+
+plt.tight_layout(rect=[0, 0.03, 1, 0.97])
+plt.savefig("forecast_models_and_residuals.png")
+plt.close()
+
+# -------------------------
+# 6. Accuracy Metrics
+# -------------------------
 def evaluate_model(y_true, y_pred, name):
     return {
         "Model": name,
@@ -114,12 +200,12 @@ def evaluate_model(y_true, y_pred, name):
 metrics_df = pd.DataFrame([
     evaluate_model(y_test, rf_preds, "Random Forest"),
     evaluate_model(y_test, xgb_preds, "XGBoost"),
-    evaluate_model(prophet_df['y'], forecast_prophet.loc[:len(prophet_df)-1, 'yhat'], "Prophet")
+    evaluate_model(prophet_df['y'], prophet_pred, "Prophet")
 ])
 
-# ----------------------------------------
-# 6. Export Results
-# ----------------------------------------
+# -------------------------
+# 7. Export Outputs
+# -------------------------
 forecast_df = pd.DataFrame({
     'Month': pd.date_range(start=ts_data.index[-1] + pd.offsets.MonthBegin(), periods=12, freq='M'),
     'Prophet Forecast': forecast_prophet.tail(12)['yhat'].values
@@ -128,6 +214,6 @@ forecast_df = pd.DataFrame({
 forecast_df.to_excel("final_forecast_output.xlsx", index=False)
 metrics_df.to_excel("final_forecast_metrics.xlsx", index=False)
 
-print("✅ Forecasts saved to 'final_forecast_output.xlsx'")
+print("✅ Forecast charts and EDA saved as PNG files")
+print("✅ Forecast saved to 'final_forecast_output.xlsx'")
 print("✅ Accuracy metrics saved to 'final_forecast_metrics.xlsx'")
-print("✅ EDA charts saved as PNG files")
