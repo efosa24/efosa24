@@ -94,3 +94,48 @@ with PdfPages(output_pdf) as pdf:
     plt.close()
 
 print(f"PDF saved as: {output_pdf}")
+####################################################################################################################
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from prophet import Prophet
+import seaborn as sns
+
+# Set theme
+sns.set_theme(style="whitegrid")
+
+# Simulate dataset (you can replace this with your actual data)
+np.random.seed(42)
+dates_extended = pd.date_range(start="2022-01-01", end="2024-12-31", freq='D')
+products = ['Product A', 'Product B', 'Product C', 'Product D', 'Product E']
+manufacturing_sites = ['Site X', 'Site Y', 'Site Z', 'Site A', 'Site B']
+df_extended = pd.DataFrame({
+    'Date Received': np.random.choice(dates_extended, 3000),
+    'Product': np.random.choice(products, 3000),
+    'Manufacturing Site': np.random.choice(manufacturing_sites, 3000)
+})
+
+# Preprocessing
+df_extended['Date Received'] = pd.to_datetime(df_extended['Date Received'])
+df_extended['Month'] = df_extended['Date Received'].dt.to_period('M').dt.to_timestamp()
+monthly_data = df_extended.groupby('Month').size().reset_index(name='y')
+monthly_data.rename(columns={'Month': 'ds'}, inplace=True)
+
+# Fit Prophet model
+model = Prophet(yearly_seasonality=True, interval_width=0.95)
+model.fit(monthly_data)
+
+# Create future dataframe and forecast
+future = model.make_future_dataframe(periods=12, freq='M')
+forecast = model.predict(future)
+
+# Plot forecast with confidence intervals
+fig = model.plot(forecast)
+plt.title('Forecast of Monthly Complaint Volume with Confidence Interval')
+plt.xlabel('Date')
+plt.ylabel('Complaint Count')
+plt.tight_layout()
+
+# Save as PDF
+fig.savefig("forecast_march_next_year.pdf")
+
