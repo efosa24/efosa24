@@ -1,0 +1,29 @@
+def resolve_duplicates(df):
+    # Step 1: Identify duplicate tracking numbers
+    dup_ids = df[df.duplicated('tracking_no_link', keep=False)]['tracking_no_link'].unique()
+    dup_df = df[df['tracking_no_link'].isin(dup_ids)]
+
+    # Step 2: Non-duplicate rows
+    non_dup_df = df[~df['tracking_no_link'].isin(dup_ids)]
+
+    # Step 3: Define override seriousness values
+    override_values = ['Adverse Event', 'Serious AE', 'AE Level 1', 'AE Level 2']
+
+    # Step 4: Resolve duplicates
+    resolved_rows = []
+
+    for tracking_no, group in dup_df.groupby('tracking_no_link'):
+        seriousness_list = group['seriousness'].values
+
+        if 'Lack of Effect' in seriousness_list and any(val in seriousness_list for val in override_values):
+            # Prefer Lack of Effect when override condition matches
+            keep_row = group[group['seriousness'] == 'Lack of Effect'].iloc[0]
+        else:
+            # Otherwise keep the first one
+            keep_row = group.iloc[0]
+
+        resolved_rows.append(keep_row)
+
+    # Step 5: Combine
+    resolved_df = pd.concat([non_dup_df, pd.DataFrame(resolved_rows)], ignore_index=True)
+    return resolved_df
