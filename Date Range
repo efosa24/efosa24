@@ -1,4 +1,13 @@
 from datetime import datetime, timedelta
+#Import the closure data
+
+df1 = pd.read_csv('')
+
+#Import the open overdue cases 
+
+df2 = pd.read_csv('')
+
+#Set logic for date range 
 
 def calculate_current_financial_month(base_date="2024-12-30"):
     """
@@ -34,5 +43,19 @@ def calculate_current_financial_month(base_date="2024-12-30"):
 # Example usage:
 period = calculate_current_financial_month()
 print(f"📅 Financial Month Label: {period['Label']}")
-print(f"Raw Date Range: {period['Start Date'].strftime('%Y-%m-%d')} to {period['End Date'].strftime('%Y-%m-%d')}")
 print(f"Adjusted Date Range: {period['Adjusted Start'].strftime('%Y-%m-%d')} to {period['Adjusted End'].strftime('%Y-%m-%d')}")
+
+
+
+# Calculate current financial month
+period = calculate_current_financial_month()
+
+# Assign
+adjusted_start = period["Adjusted Start"]
+adjusted_end = period["Adjusted End"]
+raw_start = period["Start Date"]
+raw_end = period["End Date"]
+
+# Filter datasets
+df1 = df1[(df1["Date Entered"] >= adjusted_start) & (df1["Date Entered"] <= adjusted_end)]
+
