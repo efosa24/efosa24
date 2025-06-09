@@ -1,0 +1,95 @@
+f['region'] = df['region'].fillna('NA')
+df['iss_entrd_pqms'] = pd.to_datetime(df['iss_entrd_pqms'], errors='coerce')
+df['Month'] = df['iss_entrd_pqms'].dt.to_period('M').dt.to_timestamp()
+df['Complaint Count'] = 1
+
+required_cols = ['iss_entrd_pqms', 'fmly_lvl2_desc', 'region']
+
+df = df.dropna(subset=required_cols)
+
+# -------------------------------
+# 2. Setup Output Directory
+# -------------------------------
+output_dir = "region_forecasts"
+os.makedirs(output_dir, exist_ok=True)
+
+# -------------------------------
+# 3. Loop Through Each Region
+# -------------------------------
+results = []
+
+for region in df['region'].unique():
+    print(f"\nProcessing Region: {region}")
+    region_df = df[df['region'] == region].copy()
+    monthly_df = region_df.groupby('Month').agg({'Complaint Count': 'sum'}).reset_index()
+
+    if len(monthly_df) < 12:
+        print(f"Not enough data for {region}, skipping...")
+        continue
+
+    # --------------------------------------
+    # 3a. Prophet Model with Confidence Interval
+    # --------------------------------------
+    prophet_df = monthly_df.rename(columns={'Month': 'ds', 'Complaint Count': 'y'})
+    prophet_model = Prophet(yearly_seasonality=True, monthly_seasonality=True, weekly_seasonality=False)
+    prophet_model.fit(prophet_df)
+    future = prophet_model.make_future_dataframe(periods=12, freq='M')
+    forecast = prophet_model.predict(future)
+
+    # Prophet Residuals
+    prophet_fitted = forecast.iloc[:len(prophet_df)]['yhat'].values
+    prophet_resid = prophet_df['y'].values - prophet_fitted
+
+    # --------------------------------------
+    # 3b. Plot with Confidence Intervals
+    # --------------------------------------
+    plt.figure(figsize=(12, 5))
+    plt.plot(forecast['ds'], forecast['yhat'], label='Forecast', color='blue')
+    plt.fill_between(forecast['ds'], forecast['yhat_lower'], forecast['yhat_upper'],
+                     color='lightblue', alpha=0.5, label='Confidence Interval')
+    plt.plot(prophet_df['ds'], prophet_df['y'], label='Observed', color='black')
+    plt.title(f'{region} - Prophet Forecast with Confidence Interval')
+    plt.xlabel('Date')
+    plt.ylabel('Complaint Count')
+    plt.legend()
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    chart_path = os.path.join(output_dir, f"{region}_prophet_forecast_ci.png")
+    plt.savefig(chart_path)
+    plt.close()
+
+    # --------------------------------------
+    # 3c. Export Forecast with Confidence Interval
+    # --------------------------------------
+    export_forecast = forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail(12)
+    export_forecast.rename(columns={
+        'ds': 'Month',
+        'yhat': 'Predicted Complaints',
+        'yhat_lower': 'Lower Bound',
+        'yhat_upper': 'Upper Bound'
+    }, inplace=True)
+    forecast_path = os.path.join(output_dir, f"{region}_future_forecast.xlsx")
+    export_forecast.to_excel(forecast_path, index=False)
+
+    # --------------------------------------
+    # 3d. Log Results for Summary
+    # --------------------------------------
+    prophet_mae = mean_absolute_error(prophet_df['y'], prophet_fitted)
+    prophet_rmse = np.sqrt(mean_squared_error(prophet_df['y'], prophet_fitted))
+
+    results.append({
+        'Region': region,
+        'Prophet MAE': round(prophet_mae, 2),
+        'Prophet RMSE': round(prophet_rmse, 2),
+        'Forecast Chart': chart_path,
+        'Forecast Excel': forecast_path
+    })
+
+# -------------------------------
+# 4. Save Summary Metrics
+# -------------------------------
+summary_df = pd.DataFrame(results)
+summary_path = os.path.join(output_dir, "forecast_summary_metrics.xlsx")
+summary_df.to_excel(summary_path, index=False)
+
+print("\n✅ All region forecasts with confidence intervals and metrics saved in:", output_dir)
