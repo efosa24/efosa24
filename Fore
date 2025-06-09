@@ -5,159 +5,123 @@ import matplotlib.pyplot as plt
 from prophet import Prophet
 from statsmodels.tsa.arima.model import ARIMA
 from sklearn.metrics import mean_absolute_error, mean_squared_error
-from sklearn.preprocessing import MinMaxScaler
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense
-from tensorflow.keras.callbacks import EarlyStopping
+from statsmodels.tsa.seasonal import seasonal_decompose
 
 # -------------------------------
-# 1. Load & Prepare Data
+# 1. Load & Preprocess Data
 # -------------------------------
-df = pd.read_csv("your_data.csv")  # Replace with your file
+df = pd.read_csv("your_file.csv")  # Replace with actual path
 df['region'] = df['region'].fillna('NA')
 df['iss_entrd_pqms'] = pd.to_datetime(df['iss_entrd_pqms'], errors='coerce')
 df['Month'] = df['iss_entrd_pqms'].dt.to_period('M').dt.to_timestamp()
 df['Complaint Count'] = 1
-df = df.dropna(subset=['iss_entrd_pqms', 'fmly_lvl2_desc', 'region'])
 
-# Add Global
-df = pd.concat([df, df.assign(region='GLOBAL')])
+required_cols = ['iss_entrd_pqms', 'fmly_lvl2_desc', 'region']
+df = df.dropna(subset=required_cols)
+
+# Add global view
+df_global = df.copy()
+df_global['region'] = 'GLOBAL'
+df = pd.concat([df, df_global], ignore_index=True)
 
 # Output directory
 output_dir = "region_forecasts"
 os.makedirs(output_dir, exist_ok=True)
 
 results = []
-future_months = 12
 
 # -------------------------------
-# 2. Model Functions
-# -------------------------------
-def prophet_forecast(df_region):
-    prophet_df = df_region.rename(columns={'Month': 'ds', 'Complaint Count': 'y'})
-    model = Prophet(yearly_seasonality=True, monthly_seasonality=True)
-    model.fit(prophet_df)
-    future = model.make_future_dataframe(periods=future_months, freq='M')
-    forecast = model.predict(future)
-    forecast = forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']]
-    forecast[['yhat', 'yhat_lower', 'yhat_upper']] = forecast[['yhat', 'yhat_lower', 'yhat_upper']].round().astype(int)
-    return forecast, forecast['yhat'][:len(df_region)], df_region['Complaint Count'].values
-
-def arima_forecast(df_region):
-    series = df_region['Complaint Count'].values
-    model = ARIMA(series, order=(1, 1, 1))
-    model_fit = model.fit()
-    forecast = model_fit.forecast(steps=future_months)
-    fitted = model_fit.fittedvalues
-    return forecast.round().astype(int), fitted[1:], series[1:]
-
-def lstm_forecast(df_region):
-    data = df_region['Complaint Count'].values.reshape(-1, 1)
-    scaler = MinMaxScaler()
-    data_scaled = scaler.fit_transform(data)
-
-    # Create sequences
-    def create_seq(data, n_steps=3):
-        X, y = [], []
-        for i in range(len(data) - n_steps):
-            X.append(data[i:i+n_steps])
-            y.append(data[i+n_steps])
-        return np.array(X), np.array(y)
-
-    n_steps = 3
-    X, y = create_seq(data_scaled, n_steps)
-    X = X.reshape((X.shape[0], X.shape[1], 1))
-
-    model = Sequential()
-    model.add(LSTM(50, activation='relu', input_shape=(n_steps, 1)))
-    model.add(Dense(1))
-    model.compile(optimizer='adam', loss='mse')
-    model.fit(X, y, epochs=100, verbose=0, callbacks=[EarlyStopping(patience=10)])
-
-    # Forecast
-    last_seq = data_scaled[-n_steps:]
-    preds = []
-    for _ in range(future_months):
-        pred = model.predict(last_seq.reshape((1, n_steps, 1)), verbose=0)[0][0]
-        preds.append(pred)
-        last_seq = np.vstack([last_seq[1:], [[pred]]])
-    forecast = scaler.inverse_transform(np.array(preds).reshape(-1, 1)).flatten().round().astype(int)
-    fitted = scaler.inverse_transform(model.predict(X).reshape(-1, 1)).flatten()
-    actual = scaler.inverse_transform(y.reshape(-1, 1)).flatten()
-    return forecast, fitted, actual
-
-# -------------------------------
-# 3. Forecast Loop
+# 2. Forecasting Loop
 # -------------------------------
 for region in df['region'].unique():
-    print(f"\n🔄 Processing: {region}")
+    print(f"\n🔄 Processing Region: {region}")
     region_df = df[df['region'] == region].copy()
     monthly_df = region_df.groupby('Month').agg({'Complaint Count': 'sum'}).reset_index()
 
     if len(monthly_df) < 24:
-        print(f"⏭️ Skipping {region}, not enough data.")
+        print(f"⏭️ Skipping {region}: Not enough data.")
         continue
 
-    # Run all 3 models
-    prophet_fc, prophet_fitted, prophet_actual = prophet_forecast(monthly_df)
-    arima_fc, arima_fitted, arima_actual = arima_forecast(monthly_df)
-    lstm_fc, lstm_fitted, lstm_actual = lstm_forecast(monthly_df)
+    # --- Prophet ---
+    prophet_df = monthly_df.rename(columns={'Month': 'ds', 'Complaint Count': 'y'})
+    prophet_model = Prophet(yearly_seasonality=True, monthly_seasonality=True)
+    prophet_model.fit(prophet_df)
 
-    # Evaluation
-    metrics = {
-        'Prophet': {
-            'MAE': mean_absolute_error(prophet_actual, prophet_fitted),
-            'RMSE': np.sqrt(mean_squared_error(prophet_actual, prophet_fitted)),
-            'Forecast': prophet_fc['yhat'].tail(future_months).values
-        },
-        'ARIMA': {
-            'MAE': mean_absolute_error(arima_actual, arima_fitted),
-            'RMSE': np.sqrt(mean_squared_error(arima_actual, arima_fitted)),
-            'Forecast': arima_fc
-        },
-        'LSTM': {
-            'MAE': mean_absolute_error(lstm_actual, lstm_fitted),
-            'RMSE': np.sqrt(mean_squared_error(lstm_actual, lstm_fitted)),
-            'Forecast': lstm_fc
-        }
-    }
+    future = prophet_model.make_future_dataframe(periods=12, freq='M')
+    forecast = prophet_model.predict(future)
+    forecast['yhat'] = forecast['yhat'].round()
+    prophet_fitted = forecast['yhat'].iloc[:len(prophet_df)].values
+    prophet_actual = prophet_df['y'].values
+    prophet_rmse = np.sqrt(mean_squared_error(prophet_actual, prophet_fitted))
+    prophet_mae = mean_absolute_error(prophet_actual, prophet_fitted)
 
-    best_model = min(metrics, key=lambda m: metrics[m]['RMSE'])
-
-    # Save best forecast
-    months = pd.date_range(monthly_df['Month'].max() + pd.DateOffset(months=1), periods=future_months, freq='M')
-    forecast_df = pd.DataFrame({'Month': months, 'Forecasted Complaints': metrics[best_model]['Forecast']})
-    forecast_path = os.path.join(output_dir, f"{region}_forecast_{best_model}.xlsx")
-    forecast_df.to_excel(forecast_path, index=False)
-
-    # Plot
+    # Plot Prophet
     plt.figure(figsize=(10, 4))
-    plt.plot(monthly_df['Month'], monthly_df['Complaint Count'], label="Observed", color="black")
-    plt.plot(months, metrics[best_model]['Forecast'], label=f"{best_model} Forecast", color="blue")
-    plt.title(f"{region} - Best Model: {best_model}")
-    plt.xlabel("Date")
-    plt.ylabel("Complaint Count")
+    plt.plot(prophet_df['ds'], prophet_df['y'], label='Observed')
+    plt.plot(forecast['ds'], forecast['yhat'], label='Forecast')
+    plt.fill_between(forecast['ds'], forecast['yhat_lower'], forecast['yhat_upper'], alpha=0.3)
+    plt.title(f"{region} - Prophet Forecast")
     plt.legend()
     plt.xticks(rotation=45)
     plt.tight_layout()
-    chart_path = os.path.join(output_dir, f"{region}_{best_model}_forecast.png")
-    plt.savefig(chart_path)
+    prophet_chart = os.path.join(output_dir, f"{region}_prophet_forecast.png")
+    plt.savefig(prophet_chart)
     plt.close()
+
+    # --- ARIMA ---
+    ts = monthly_df.set_index('Month')['Complaint Count']
+    arima_model = ARIMA(ts, order=(1, 1, 1))
+    arima_result = arima_model.fit()
+    arima_fitted = arima_result.fittedvalues
+    arima_resid = arima_result.resid
+    arima_forecast = arima_result.forecast(steps=12).round()
+
+    # ARIMA errors
+    arima_actual = ts[1:]  # Due to diff=1
+    arima_rmse = np.sqrt(mean_squared_error(arima_actual, arima_fitted))
+    arima_mae = mean_absolute_error(arima_actual, arima_fitted)
+
+    # Plot ARIMA
+    plt.figure(figsize=(10, 4))
+    plt.plot(ts, label='Observed')
+    forecast_index = pd.date_range(ts.index[-1] + pd.DateOffset(months=1), periods=12, freq='M')
+    plt.plot(forecast_index, arima_forecast, label='ARIMA Forecast')
+    plt.title(f"{region} - ARIMA Forecast")
+    plt.legend()
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    arima_chart = os.path.join(output_dir, f"{region}_arima_forecast.png")
+    plt.savefig(arima_chart)
+    plt.close()
+
+    # --- Best Model ---
+    best_model = 'Prophet' if prophet_rmse < arima_rmse else 'ARIMA'
+    best_forecast = forecast[['ds', 'yhat']].tail(12).copy() if best_model == 'Prophet' else pd.DataFrame({
+        'ds': forecast_index,
+        'yhat': arima_forecast.values
+    })
+
+    # Export forecast to Excel
+    excel_path = os.path.join(output_dir, f"{region}_{best_model}_forecast.xlsx")
+    best_forecast.rename(columns={'ds': 'Month', 'yhat': 'Forecasted Complaints'}, inplace=True)
+    best_forecast.to_excel(excel_path, index=False)
 
     results.append({
         'Region': region,
+        'Prophet RMSE': round(prophet_rmse, 2),
+        'ARIMA RMSE': round(arima_rmse, 2),
+        'Prophet MAE': round(prophet_mae, 2),
+        'ARIMA MAE': round(arima_mae, 2),
         'Best Model': best_model,
-        'MAE': round(metrics[best_model]['MAE'], 2),
-        'RMSE': round(metrics[best_model]['RMSE'], 2),
-        'Forecast Chart': chart_path,
-        'Forecast Excel': forecast_path
+        'Forecast Excel': excel_path,
+        'Forecast Chart': prophet_chart if best_model == 'Prophet' else arima_chart
     })
 
 # -------------------------------
-# 4. Save Summary
+# 3. Save Summary
 # -------------------------------
-summary = pd.DataFrame(results)
-summary_path = os.path.join(output_dir, "forecast_model_summary.xlsx")
-summary.to_excel(summary_path, index=False)
+summary_df = pd.DataFrame(results)
+summary_file = os.path.join(output_dir, "forecast_model_summary.xlsx")
+summary_df.to_excel(summary_file, index=False)
 
-print("\n✅ Forecasting Complete. Results saved to:", output_dir)
+print("\n✅ Forecasting complete. Results saved to:", output_dir)
