@@ -1,33 +1,53 @@
-WITH RankedData AS (
-  SELECT 
-    REL.FG_NM,
-    ERP.EAN_CD,
-    ERP.MATERIAL_SKU_CODE,
-    ERP.MATL_SHRT_DESC,
-    ATT.RGN_CD AS REGION1,
-    ERP.RGN_CD AS REGION2,
-    ATT.PROD_MGMT_CD,
-    REL.FG_CHILD_NM,
-    ERP_CHILD.MATERIAL_SKU_CODE AS CHILD_SKU_CODE,
-    ATT_CHILD.SPEC_DESC,
-    ATT_CHILD.SPEC_TYPE_CD,
-    ROW_NUMBER() OVER (PARTITION BY REL.FG_NM, REL.FG_CHILD_NM ORDER BY REL.FG_NM, REL.FG_CHILD_NM) AS rn
-  FROM PROD_PRODUCT360_CORE.CORE_ACCESS.DP_P360_TRU_REL REL
-  LEFT JOIN PROD_PRODUCT360_CORE.CORE_ACCESS.DP_P360_TRU_ATT ATT 
-    ON REL.FG_NM = ATT.SPEC_NM
-  LEFT JOIN PROD_PRODUCT360_CORE.CORE_ACCESS.DP_P360_ERP ERP 
-    ON ATT.FG_ERP_CD_TXT = LTRIM(ERP.MATL_NUM, 0)
-  LEFT JOIN PROD_PRODUCT360_CORE.CORE_ACCESS.DP_P360_TRU_ATT ATT_CHILD 
-    ON REL.FG_CHILD_NM = ATT_CHILD.SPEC_NM
-  LEFT JOIN PROD_PRODUCT360_CORE.CORE_ACCESS.DP_P360_ERP ERP_CHILD 
-    ON ATT_CHILD.FG_ERP_CD_TXT = LTRIM(ERP_CHILD.MATL_NUM, 0)
-  WHERE ERP.MATERIAL_SKU_CODE IS NOT NULL
-    AND (REL.FG_CHILD_NM IS NOT NULL OR ERP_CHILD.MATERIAL_SKU_CODE IS NOT NULL)
-    AND ATT.PROD_MGMT_CD = 'Trade Customization'
-    AND ATT.RGN_CD = 'North America'
-    AND REL.FG_NM = 'FG-0000069'
-)
-SELECT *
-FROM RankedData
-WHERE rn = 1
-ORDER BY FG_NM, FG_CHILD_NM;
+def evaluate_models(monthly_df):
+    monthly_df = monthly_df.set_index('Month').asfreq('M')
+    y = monthly_df['Complaint Count'].dropna()
+
+    if len(y) < 15 or y.nunique() < 2:
+        return None  # Skip if too little data or no variation
+
+    index = y.index
+    models = {}
+
+    # Prophet
+    try:
+        prophet_df = y.reset_index().rename(columns={'Month': 'ds', 'Complaint Count': 'y'})
+        prophet = Prophet(yearly_seasonality=True)
+        prophet.fit(prophet_df)
+        future = prophet.make_future_dataframe(periods=12, freq='M')
+        forecast = prophet.predict(future)
+        prophet_fitted = forecast['yhat'][:len(y)].values
+        prophet_forecast = forecast[['ds', 'yhat']].tail(12)
+        prophet_rmse = np.sqrt(mean_squared_error(y, prophet_fitted))
+        prophet_resid = y.values - prophet_fitted
+        models['Prophet'] = (prophet_rmse, prophet_forecast, y, prophet_fitted, prophet_resid)
+    except Exception as e:
+        print(f"⚠️ Prophet failed: {e}")
+
+    # Holt-Winters
+    try:
+        hw = ExponentialSmoothing(y, seasonal='add', seasonal_periods=12).fit()
+        hw_fitted = hw.fittedvalues
+        hw_forecast = hw.forecast(12)
+        hw_rmse = np.sqrt(mean_squared_error(y, hw_fitted))
+        hw_resid = y.values - hw_fitted
+        models['Holt-Winters'] = (hw_rmse, hw_forecast, y, hw_fitted, hw_resid)
+    except Exception as e:
+        print(f"⚠️ Holt-Winters failed: {e}")
+
+    # ARIMA
+    try:
+        arima = ARIMA(y, order=(1, 1, 1)).fit()
+        arima_fitted = arima.predict(start=1, end=len(y), typ='levels')
+        arima_forecast = arima.forecast(12)
+        arima_rmse = np.sqrt(mean_squared_error(y[1:], arima_fitted))
+        arima_resid = y[1:].values - arima_fitted
+        models['ARIMA'] = (arima_rmse, arima_forecast, y[1:], arima_fitted, arima_resid)
+    except Exception as e:
+        print(f"⚠️ ARIMA failed: {e}")
+
+    if not models:
+        return None
+
+    # Return best model
+    best_model = min(models.items(), key=lambda x: x[1][0])
+    return best_model[0], best_model[1]
