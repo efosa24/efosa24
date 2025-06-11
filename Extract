@@ -1,53 +1,19 @@
-def evaluate_models(monthly_df):
-    monthly_df = monthly_df.set_index('Month').asfreq('M')
-    y = monthly_df['Complaint Count'].dropna()
+for region in df['region'].unique():
+    print(f"\nProcessing: {region}")
+    region_df = df[df['region'] == region]
+    monthly_df = region_df.groupby('Month', as_index=False)['Complaint Count'].sum()
 
-    if len(y) < 15 or y.nunique() < 2:
-        return None  # Skip if too little data or no variation
+    # Check minimum data quality
+    if len(monthly_df.dropna()) < 15 or monthly_df['Complaint Count'].nunique() < 2:
+        print(f"Skipping {region} - not enough data or variation.")
+        continue
 
-    index = y.index
-    models = {}
+    # Safe call with None check
+    result = evaluate_models(monthly_df)
+    if result is None:
+        print(f"Skipping {region} - all models failed.")
+        continue
 
-    # Prophet
-    try:
-        prophet_df = y.reset_index().rename(columns={'Month': 'ds', 'Complaint Count': 'y'})
-        prophet = Prophet(yearly_seasonality=True)
-        prophet.fit(prophet_df)
-        future = prophet.make_future_dataframe(periods=12, freq='M')
-        forecast = prophet.predict(future)
-        prophet_fitted = forecast['yhat'][:len(y)].values
-        prophet_forecast = forecast[['ds', 'yhat']].tail(12)
-        prophet_rmse = np.sqrt(mean_squared_error(y, prophet_fitted))
-        prophet_resid = y.values - prophet_fitted
-        models['Prophet'] = (prophet_rmse, prophet_forecast, y, prophet_fitted, prophet_resid)
-    except Exception as e:
-        print(f"⚠️ Prophet failed: {e}")
+    best_model_name, (rmse, forecast, y_true, fitted, resid) = result
 
-    # Holt-Winters
-    try:
-        hw = ExponentialSmoothing(y, seasonal='add', seasonal_periods=12).fit()
-        hw_fitted = hw.fittedvalues
-        hw_forecast = hw.forecast(12)
-        hw_rmse = np.sqrt(mean_squared_error(y, hw_fitted))
-        hw_resid = y.values - hw_fitted
-        models['Holt-Winters'] = (hw_rmse, hw_forecast, y, hw_fitted, hw_resid)
-    except Exception as e:
-        print(f"⚠️ Holt-Winters failed: {e}")
-
-    # ARIMA
-    try:
-        arima = ARIMA(y, order=(1, 1, 1)).fit()
-        arima_fitted = arima.predict(start=1, end=len(y), typ='levels')
-        arima_forecast = arima.forecast(12)
-        arima_rmse = np.sqrt(mean_squared_error(y[1:], arima_fitted))
-        arima_resid = y[1:].values - arima_fitted
-        models['ARIMA'] = (arima_rmse, arima_forecast, y[1:], arima_fitted, arima_resid)
-    except Exception as e:
-        print(f"⚠️ ARIMA failed: {e}")
-
-    if not models:
-        return None
-
-    # Return best model
-    best_model = min(models.items(), key=lambda x: x[1][0])
-    return best_model[0], best_model[1]
+    # -- proceed with plotting and saving forecast --
