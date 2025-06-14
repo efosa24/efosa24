@@ -5,93 +5,141 @@ import matplotlib.pyplot as plt
 from prophet import Prophet
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 from statsmodels.tsa.arima.model import ARIMA
-from sklearn.metrics import mean_absolute_error, mean_squared_error
+from sklearn.metrics import mean_squared_error
+import warnings
 
-# ---- LOAD AND PREP DATA ----
-df = pd.read_csv("your_data.csv")  # Replace with your dataset
-df['region'] = df['region'].fillna('NA')
-df['iss_entrd_pqms'] = pd.to_datetime(df['iss_entrd_pqms'], errors='coerce')
-df['Month'] = df['iss_entrd_pqms'].dt.to_period('M').dt.to_timestamp()
-df['Complaint Count'] = 1
-df = df.dropna(subset=['iss_entrd_pqms', 'region'])
+warnings.filterwarnings("ignore")
 
-# Add Global
+# -------------------------------------------------------
+# 1. Simulate 36 months of complaint data for each region
+# -------------------------------------------------------
+regions = ['NA', 'EMEA', 'LATAM', 'APAC']
+dates = pd.date_range(start='2021-01-01', end='2023-12-01', freq='MS')  # 36 months
+
+print(f"Simulating data for {len(dates)} months...")  # Expect 36
+
+data = []
+for region in regions:
+    base = 100 + 20 * regions.index(region)
+    for date in dates:
+        count = base + np.random.randint(-15, 15)
+        data.append({
+            'region': region,
+            'iss_entrd_pqms': date,
+            'Complaint Count': count
+        })
+
+df = pd.DataFrame(data)
+df['Month'] = pd.to_datetime(df['iss_entrd_pqms']).dt.to_period('M').dt.to_timestamp()
+
+# Add Global region
 global_df = df.groupby('Month', as_index=False)['Complaint Count'].sum()
 global_df['region'] = 'Global'
 df = pd.concat([df, global_df], ignore_index=True)
 
-# ---- SETUP OUTPUT DIR ----
+# Validate simulation
+print("\n✅ Month counts per region:")
+print(df.groupby('region')['Month'].nunique())
+
+# -------------------------------------------------------
+# 2. Forecasting Function with Debug Output
+# -------------------------------------------------------
+def evaluate_models(monthly_df):
+    monthly_df = monthly_df.set_index('Month').resample('M').sum()  # ✅ FIXED
+    y = monthly_df['Complaint Count'].dropna()
+
+    print("✅ Model input length:", len(y))
+    print("✅ Unique complaint counts:", y.nunique())
+
+    if len(y) < 12 or y.nunique() < 2:
+        print("⚠️ Skipping: insufficient data or constant values.")
+        return None
+
+    models = {}
+
+    try:
+        print("🧠 Trying Prophet...")
+        prophet_df = y.reset_index().rename(columns={'Month': 'ds', 'Complaint Count': 'y'})
+        prophet = Prophet(yearly_seasonality='auto', changepoint_prior_scale=0.1)
+        prophet.fit(prophet_df)
+        future = prophet.make_future_dataframe(periods=12, freq='M')
+        forecast = prophet.predict(future)
+        prophet_fitted = forecast['yhat'][:len(y)].values
+        prophet_forecast = forecast[['ds', 'yhat']].tail(12)
+        prophet_rmse = np.sqrt(mean_squared_error(y, prophet_fitted))
+        prophet_resid = y.values - prophet_fitted
+        models['Prophet'] = (prophet_rmse, prophet_forecast, y, prophet_fitted, prophet_resid)
+        print(f"✅ Prophet RMSE: {prophet_rmse:.2f}")
+    except Exception as e:
+        print(f"❌ Prophet failed: {e}")
+
+    try:
+        print("🧠 Trying Holt-Winters...")
+        hw = ExponentialSmoothing(y, seasonal='add', seasonal_periods=12).fit()
+        hw_fitted = hw.fittedvalues
+        hw_forecast = hw.forecast(12)
+        hw_rmse = np.sqrt(mean_squared_error(y, hw_fitted))
+        hw_resid = y.values - hw_fitted
+        models['Holt-Winters'] = (hw_rmse, hw_forecast, y, hw_fitted, hw_resid)
+        print(f"✅ Holt-Winters RMSE: {hw_rmse:.2f}")
+    except Exception as e:
+        print(f"❌ Holt-Winters failed: {e}")
+
+    try:
+        print("🧠 Trying ARIMA...")
+        arima = ARIMA(y, order=(1, 1, 1)).fit()
+        arima_fitted = arima.predict(start=1, end=len(y), typ='levels')
+        arima_forecast = arima.forecast(12)
+        arima_rmse = np.sqrt(mean_squared_error(y[1:], arima_fitted))
+        arima_resid = y[1:].values - arima_fitted
+        models['ARIMA'] = (arima_rmse, arima_forecast, y[1:], arima_fitted, arima_resid)
+        print(f"✅ ARIMA RMSE: {arima_rmse:.2f}")
+    except Exception as e:
+        print(f"❌ ARIMA failed: {e}")
+
+    if not models:
+        print("❌ All models failed.")
+        return None
+
+    best_model = min(models.items(), key=lambda x: x[1][0])
+    print(f"🏆 Best Model: {best_model[0]}")
+    return best_model[0], best_model[1]
+
+# -------------------------------------------------------
+# 3. Run Forecasts for Each Region and Save Output
+# -------------------------------------------------------
 output_dir = "region_forecasts"
 os.makedirs(output_dir, exist_ok=True)
 
-# ---- MODELING FUNCTION ----
-def evaluate_models(monthly_df):
-    monthly_df = monthly_df.set_index('Month').asfreq('M')
-    y = monthly_df['Complaint Count']
-    index = y.index
-
-    # Prophet
-    prophet_df = y.reset_index().rename(columns={'Month': 'ds', 'Complaint Count': 'y'})
-    prophet = Prophet(yearly_seasonality=True)
-    prophet.fit(prophet_df)
-    future = prophet.make_future_dataframe(periods=12, freq='M')
-    forecast = prophet.predict(future)
-    prophet_fitted = forecast['yhat'][:len(y)].values
-    prophet_forecast = forecast[['ds', 'yhat']].tail(12)
-    prophet_rmse = np.sqrt(mean_squared_error(y, prophet_fitted))
-    prophet_resid = y.values - prophet_fitted
-
-    # Holt-Winters
-    hw = ExponentialSmoothing(y, seasonal='add', seasonal_periods=12).fit()
-    hw_fitted = hw.fittedvalues
-    hw_forecast = hw.forecast(12)
-    hw_rmse = np.sqrt(mean_squared_error(y, hw_fitted))
-    hw_resid = y.values - hw_fitted
-
-    # ARIMA
-    arima = ARIMA(y, order=(1, 1, 1)).fit()
-    arima_fitted = arima.predict(start=1, end=len(y), typ='levels')
-    arima_forecast = arima.forecast(12)
-    arima_rmse = np.sqrt(mean_squared_error(y[1:], arima_fitted))
-    arima_resid = y[1:].values - arima_fitted
-
-    models = {
-        'Prophet': (prophet_rmse, prophet_forecast, y, prophet_fitted, prophet_resid),
-        'Holt-Winters': (hw_rmse, hw_forecast, y, hw_fitted, hw_resid),
-        'ARIMA': (arima_rmse, arima_forecast, y[1:], arima_fitted, arima_resid)
-    }
-
-    best_model = min(models.items(), key=lambda x: x[1][0])
-    return best_model[0], best_model[1]
-
-# ---- LOOP THROUGH REGIONS ----
 summary = []
 
 for region in df['region'].unique():
-    print(f"\nProcessing: {region}")
+    print(f"\n🔍 Processing: {region}")
     region_df = df[df['region'] == region]
     monthly_df = region_df.groupby('Month', as_index=False)['Complaint Count'].sum()
 
-    if len(monthly_df) < 15:
-        print(f"Skipping {region} - not enough data.")
+    print(f"{region} - Preview of monthly_df:")
+    print(monthly_df.head())
+
+    result = evaluate_models(monthly_df)
+    if result is None:
+        print(f"Skipping {region} – all models failed.\n")
         continue
 
-    best_model_name, (rmse, forecast, y_true, fitted, resid) = evaluate_models(monthly_df)
+    best_model_name, (rmse, forecast, y_true, fitted, resid) = result
 
-    # Forecast Output
     if isinstance(forecast, pd.DataFrame):
         forecast_df = forecast.rename(columns={'ds': 'Month', 'yhat': 'Predicted Complaints'})
     else:
         forecast_df = pd.DataFrame({
-            'Month': pd.date_range(start=monthly_df['Month'].max() + pd.offsets.MonthBegin(),
-                                   periods=12, freq='M'),
+            'Month': pd.date_range(start=monthly_df['Month'].max() + pd.offsets.MonthBegin(), periods=12, freq='M'),
             'Predicted Complaints': forecast.values
         })
 
     forecast_path = os.path.join(output_dir, f"{region}_forecast.xlsx")
     forecast_df.to_excel(forecast_path, index=False)
 
-    # Plot forecast + residuals
+    # Plot forecast and residuals
     plt.figure(figsize=(14, 5))
     plt.subplot(1, 2, 1)
     plt.plot(y_true.index, y_true.values, label='Actual')
@@ -107,8 +155,8 @@ for region in df['region'].unique():
     plt.xticks(rotation=45)
 
     plt.tight_layout()
-    chart_path = os.path.join(output_dir, f"{region}_{best_model_name}_forecast_plot.png")
-    plt.savefig(chart_path)
+    plot_path = os.path.join(output_dir, f"{region}_{best_model_name}_plot.png")
+    plt.savefig(plot_path)
     plt.close()
 
     summary.append({
@@ -116,10 +164,13 @@ for region in df['region'].unique():
         'Best Model': best_model_name,
         'RMSE': round(rmse, 2),
         'Forecast Excel': forecast_path,
-        'Forecast Plot': chart_path
+        'Plot': plot_path
     })
 
-# ---- SAVE SUMMARY ----
+# -------------------------------------------------------
+# 4. Save Summary to Excel
+# -------------------------------------------------------
 summary_df = pd.DataFrame(summary)
 summary_df.to_excel(os.path.join(output_dir, "forecast_summary.xlsx"), index=False)
-print("\n✅ Forecasts and summaries saved.")
+
+print("\n✅ Forecasting complete. All outputs saved in:", output_dir)
