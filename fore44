@@ -1,170 +1,27 @@
 import pandas as pd
-import numpy as np
-import os
 import matplotlib.pyplot as plt
-import seaborn as sns
-from sklearn.linear_model import LinearRegression
-from sklearn.ensemble import RandomForestRegressor
-from xgboost import XGBRegressor
-from sklearn.utils import resample
-from matplotlib.dates import date2num
 
-# Simulate dataset
-regions = ['NA', 'EMEA', 'LATAM', 'APAC']
-months = pd.date_range(start='2020-01-01', periods=70, freq='MS')
-products = ['Product A', 'Product B', 'Product C', 'Product D', 'BP Kit', 'BP Monitor']
-data = []
-np.random.seed(42)
+# Load the data
+df = pd.read_csv("your_data.csv", parse_dates=["Date"])  # Ensure 'Date' column is parsed correctly
 
-for region in regions:
-    for i, month in enumerate(months):
-        product = np.random.choice(products)
-        ref_type = product
-        count = 100 + 20 * regions.index(region) + np.random.randint(-10, 15) + np.sin(i * (2 * np.pi / 12)) * 10
-        program_event_val = np.random.choice(['', 'Launch', 'Upgrade'], p=[0.4, 0.3, 0.3])
-        data.append({
-            'Month': month,
-            'Region': region,
-            'Complaint Count': round(count),
-            'Program Event': program_event_val,
-            'Product': product,
-            'Ref Type': ref_type
-        })
+# Define the dates to highlight
+highlight_dates = pd.to_datetime(["2025-05-02", "2025-05-09", "2025-05-16", "2025-05-23"])
 
-df = pd.DataFrame(data)
+# Total count of entries per date
+total_per_date = df["Date"].value_counts().sort_index()
 
-# Encode Program Event and Ref Type
-df['Program Event'] = df['Program Event'].apply(lambda x: 1 if str(x).strip() != '' else 0)
-df['Ref Type'] = df['Ref Type'].apply(lambda x: 1 if 'BP' in str(x) else 0)
+# Highlighted entries
+highlight_df = df[df["Date"].isin(highlight_dates)]
+highlight_counts = highlight_df["Date"].value_counts().sort_index()
 
-# One-hot encode products
-product_dummies = pd.get_dummies(df['Product'], prefix='Product')
-df = pd.concat([df, product_dummies], axis=1)
-df.drop(columns=['Product'], inplace=True)
-
-# Add Global Region
-global_df = df.groupby('Month').agg({
-    'Complaint Count': 'sum',
-    'Program Event': 'mean',
-    'Ref Type': 'mean',
-    **{col: 'mean' for col in product_dummies.columns}
-}).reset_index()
-global_df['Region'] = 'Global'
-df = pd.concat([df, global_df], ignore_index=True)
-
-# Feature Engineering
-df['month_num'] = df['Month'].dt.month
-df['year'] = df['Month'].dt.year
-df['lag_1'] = df.groupby('Region')['Complaint Count'].shift(1)
-df['lag_12'] = df.groupby('Region')['Complaint Count'].shift(12)
-df['rolling_mean_3'] = df.groupby('Region')['Complaint Count'].transform(lambda x: x.rolling(3).mean())
-df['rolling_std_3'] = df.groupby('Region')['Complaint Count'].transform(lambda x: x.rolling(3).std())
-df.dropna(inplace=True)
-
-# Model setup
-models = {
-    'Linear Regression': LinearRegression(),
-    'Random Forest': RandomForestRegressor(n_estimators=100, random_state=42),
-    'XGBoost': XGBRegressor(n_estimators=100, random_state=42, verbosity=0)
-}
-forecast_months = pd.date_range(start='2026-01-01', periods=12, freq='MS')
-expected_features = ['month_num', 'year', 'lag_1', 'lag_12', 'rolling_mean_3', 'rolling_std_3', 'Program Event', 'Ref Type'] + list(product_dummies.columns)
-
-# Output folder
-os.makedirs("regression_model_output", exist_ok=True)
-model_results = []
-
-# Train and Forecast
-for region in df['Region'].unique():
-    region_df = df[df['Region'] == region].copy()
-    X_train = region_df[expected_features].astype(float)
-    y_train = region_df['Complaint Count']
-
-    for model_name, model in models.items():
-        model.fit(X_train, y_train)
-        last_known = region_df.iloc[-12:].copy()
-        forecast_data = []
-
-        for i in range(12):
-            row = {
-                'Month': forecast_months[i],
-                'month_num': forecast_months[i].month,
-                'year': forecast_months[i].year,
-                'Program Event': 0,
-                'Ref Type': 0.5,
-                **{col: 0.5 for col in product_dummies.columns},
-                'lag_1': last_known['Complaint Count'].iloc[-1],
-                'lag_12': last_known['Complaint Count'].iloc[i % len(last_known)],
-                'rolling_mean_3': last_known['Complaint Count'].iloc[-3:].mean(),
-                'rolling_std_3': last_known['Complaint Count'].iloc[-3:].std()
-            }
-
-            X_pred = pd.DataFrame([row])[expected_features].astype(float)
-            pred = model.predict(X_pred)[0]
-            row['Forecast'] = round(pred)
-            row['Region'] = region
-            row['Model'] = model_name
-
-            new_row = row.copy()
-            new_row['Complaint Count'] = pred
-            last_known = pd.concat([last_known, pd.DataFrame([new_row])], ignore_index=True)
-            forecast_data.append(row)
-
-        # Bootstrap for Confidence Intervals
-        boot_preds = []
-        for _ in range(20):  # faster CI estimation
-            boot_sample = resample(X_train, replace=True)
-            model.fit(boot_sample, y_train)
-            boot_preds.append(model.predict(X_pred)[0])
-
-        ci_lower = float(np.percentile(boot_preds, 2.5))
-        ci_upper = float(np.percentile(boot_preds, 97.5))
-
-        forecast_df = pd.DataFrame(forecast_data)
-        forecast_df['CI Lower'] = ci_lower
-        forecast_df['CI Upper'] = ci_upper
-        model_results.append(forecast_df)
-
-# Plot Forecast + Residuals
-for forecast_df in model_results:
-    region = forecast_df['Region'].iloc[0]
-    model_name = forecast_df['Model'].iloc[0]
-
-    forecast_df = forecast_df.dropna(subset=['Forecast', 'CI Lower', 'CI Upper', 'Month'])
-    forecast_dates = date2num(forecast_df['Month'].tolist())
-    forecast_vals = forecast_df['Forecast'].astype(float).to_numpy()
-    ci_lower_vals = forecast_df['CI Lower'].astype(float).to_numpy()
-    ci_upper_vals = forecast_df['CI Upper'].astype(float).to_numpy()
-
-    region_actual = df[df['Region'] == region]
-    X_train = region_actual[expected_features].dropna().astype(float)
-    y_train = region_actual.loc[X_train.index, 'Complaint Count']
-    model = models[model_name]
-    model.fit(X_train, y_train)
-    fitted = model.predict(X_train)
-    resid = y_train - fitted
-
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-    axes[0].plot(region_actual['Month'], region_actual['Complaint Count'], label='Actual', marker='o')
-    axes[0].plot(forecast_df['Month'], forecast_vals, label='Forecast', marker='x')
-    axes[0].fill_between(forecast_dates, ci_lower_vals, ci_upper_vals, color='gray', alpha=0.3, label='95% CI')
-    axes[0].set_title(f"{region} - {model_name} Forecast")
-    axes[0].set_xlabel("Month")
-    axes[0].set_ylabel("Complaint Count")
-    axes[0].legend()
-    axes[0].grid(True)
-
-    sns.residplot(x=fitted, y=resid, lowess=True, ax=axes[1], line_kws={'color': 'red'})
-    axes[1].set_title(f"{region} - {model_name} Residuals")
-    axes[1].set_xlabel("Fitted")
-    axes[1].set_ylabel("Residuals")
-    axes[1].grid(True)
-
-    plt.tight_layout()
-    plot_path = f"regression_model_output/{region}_{model_name.replace(' ', '_')}_forecast_plot.png"
-    plt.savefig(plot_path)
-    plt.close()
-
-# Save final forecast to Excel
-final_result = pd.concat(model_results, ignore_index=True)
-final_result.to_excel("regression_model_output/all_model_forecasts_with_ci.xlsx", index=False)
+# Plot
+plt.figure(figsize=(12, 6))
+plt.bar(total_per_date.index, total_per_date.values, label="Total", color="lightgray")
+plt.bar(highlight_counts.index, highlight_counts.values, label="Highlighted Dates", color="orange")
+plt.xticks(rotation=45)
+plt.xlabel("Date")
+plt.ylabel("Count")
+plt.title("Total vs Highlighted Dates")
+plt.legend()
+plt.tight_layout()
+plt.show()
