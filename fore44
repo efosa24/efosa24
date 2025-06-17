@@ -1,44 +1,63 @@
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
+import seaborn as sns
 
-# Load and clean data
-df = pd.read_csv("your_data.csv", parse_dates=["Date"])
-df["Date"] = df["Date"].dt.date  # Strip time, keep only date
+# Load data
+df = pd.read_csv("your_data.csv")
 
-# Define highlighted dates
-highlight_dates = pd.to_datetime(["2025-05-02", "2025-05-09", "2025-05-16", "2025-05-23"]).date
+# Define age bins
+bins = range(0, df['Issue Age'].max() + 10, 10)
+df['Issue Age Bin'] = pd.cut(df['Issue Age'], bins)
+issue_age_counts = df['Issue Age Bin'].value_counts().sort_index()
 
-# Aggregate data
-agg_df = df["Date"].value_counts().sort_index().reset_index()
-agg_df.columns = ["Date", "Count"]
-agg_df["Highlight"] = agg_df["Date"].isin(highlight_dates)
+# Set style
+sns.set(style="whitegrid")
+plt.figure(figsize=(12, 6))
+bars = sns.barplot(
+    y=issue_age_counts.index.astype(str), 
+    x=issue_age_counts.values, 
+    palette="viridis"
+)
+
+# Annotate bars
+for i, v in enumerate(issue_age_counts.values):
+    bars.text(v + 1, i, str(v), color='black', va='center', fontsize=10)
+
+# Format
+plt.title("Complaint Closure by Issue Age (Grouped in 10-Day Intervals)", fontsize=16, weight='bold')
+plt.xlabel("Number of Complaints", fontsize=12)
+plt.ylabel("Issue Age Interval (days)", fontsize=12)
+plt.tight_layout()
+plt.show()
+####################################################################
+
+# Convert date columns
+df['Awareness Date'] = pd.to_datetime(df['Awareness Date'])
+df['Date Created in PQMS'] = pd.to_datetime(df['Date Created in PQMS'])
+
+# Calculate gap
+df['Awareness Gap (days)'] = (df['Date Created in PQMS'] - df['Awareness Date']).dt.days
+
+# Bin into 10-day intervals
+bins = range(df['Awareness Gap (days)'].min(), df['Awareness Gap (days)'].max() + 10, 10)
+df['Gap Bin'] = pd.cut(df['Awareness Gap (days)'], bins)
+gap_counts = df['Gap Bin'].value_counts().sort_index()
 
 # Plot
-plt.figure(figsize=(14, 6))
-bars = plt.bar(agg_df["Date"].astype(str), agg_df["Count"],
-               color=agg_df["Highlight"].map({True: "orange", False: "lightgray"}))
+plt.figure(figsize=(12, 6))
+bars = sns.barplot(
+    y=gap_counts.index.astype(str), 
+    x=gap_counts.values, 
+    palette="magma"
+)
 
-# Annotate counts
-for bar in bars:
-    height = bar.get_height()
-    plt.annotate(f'{height}', xy=(bar.get_x() + bar.get_width() / 2, height),
-                 xytext=(0, 5), textcoords="offset points", ha='center', fontsize=9)
+# Annotate bars
+for i, v in enumerate(gap_counts.values):
+    bars.text(v + 1, i, str(v), color='black', va='center', fontsize=10)
 
-# Add custom legend
-highlight_patch = mpatches.Patch(color='orange', label='Highlighted Dates')
-normal_patch = mpatches.Patch(color='lightgray', label='Other Dates')
-plt.legend(handles=[highlight_patch, normal_patch], loc='upper left')
-
-# Axis and title
-plt.xticks(rotation=45, ha="right")
-plt.xlabel("Date")
-plt.ylabel("Total Records")
-plt.title("Daily Total Records with Highlighted Dates")
-
-# Caption for highlighted dates
-highlight_caption = "Highlighted Dates: " + ", ".join([d.strftime("%Y-%m-%d") for d in highlight_dates])
-plt.figtext(0.5, -0.05, highlight_caption, wrap=True, horizontalalignment='center', fontsize=10)
-
+# Format
+plt.title("Awareness to PQMS Entry Gap (Grouped in 10-Day Intervals)", fontsize=16, weight='bold')
+plt.xlabel("Number of Complaints", fontsize=12)
+plt.ylabel("Gap Interval (days)", fontsize=12)
 plt.tight_layout()
 plt.show()
