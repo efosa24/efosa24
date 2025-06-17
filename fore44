@@ -1,14 +1,15 @@
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 
-# Load dataset and convert datetime to just date
+# Load and clean data
 df = pd.read_csv("your_data.csv", parse_dates=["Date"])
-df["Date"] = df["Date"].dt.date  # convert datetime to just date
+df["Date"] = df["Date"].dt.date  # Strip time, keep only date
 
-# Define the highlight dates
+# Define highlighted dates
 highlight_dates = pd.to_datetime(["2025-05-02", "2025-05-09", "2025-05-16", "2025-05-23"]).date
 
-# Aggregate: count total cases per date
+# Aggregate data
 agg_df = df["Date"].value_counts().sort_index().reset_index()
 agg_df.columns = ["Date", "Count"]
 agg_df["Highlight"] = agg_df["Date"].isin(highlight_dates)
@@ -18,16 +19,26 @@ plt.figure(figsize=(14, 6))
 bars = plt.bar(agg_df["Date"].astype(str), agg_df["Count"],
                color=agg_df["Highlight"].map({True: "orange", False: "lightgray"}))
 
-# Add count labels above bars
+# Annotate counts
 for bar in bars:
     height = bar.get_height()
     plt.annotate(f'{height}', xy=(bar.get_x() + bar.get_width() / 2, height),
                  xytext=(0, 5), textcoords="offset points", ha='center', fontsize=9)
 
-# Format chart
+# Add custom legend
+highlight_patch = mpatches.Patch(color='orange', label='Highlighted Dates')
+normal_patch = mpatches.Patch(color='lightgray', label='Other Dates')
+plt.legend(handles=[highlight_patch, normal_patch], loc='upper left')
+
+# Axis and title
 plt.xticks(rotation=45, ha="right")
 plt.xlabel("Date")
 plt.ylabel("Total Records")
 plt.title("Daily Total Records with Highlighted Dates")
+
+# Caption for highlighted dates
+highlight_caption = "Highlighted Dates: " + ", ".join([d.strftime("%Y-%m-%d") for d in highlight_dates])
+plt.figtext(0.5, -0.05, highlight_caption, wrap=True, horizontalalignment='center', fontsize=10)
+
 plt.tight_layout()
 plt.show()
