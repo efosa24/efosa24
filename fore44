@@ -1,32 +1,33 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# Load dataset
+# Load dataset and convert datetime to just date
 df = pd.read_csv("your_data.csv", parse_dates=["Date"])
+df["Date"] = df["Date"].dt.date  # convert datetime to just date
 
-# Define dates to highlight
-highlight_dates = pd.to_datetime(["2025-05-02", "2025-05-09", "2025-05-16", "2025-05-23"])
+# Define the highlight dates
+highlight_dates = pd.to_datetime(["2025-05-02", "2025-05-09", "2025-05-16", "2025-05-23"]).date
 
-# Aggregate by Date
+# Aggregate: count total cases per date
 agg_df = df["Date"].value_counts().sort_index().reset_index()
 agg_df.columns = ["Date", "Count"]
 agg_df["Highlight"] = agg_df["Date"].isin(highlight_dates)
 
 # Plot
 plt.figure(figsize=(14, 6))
-bars = plt.bar(agg_df["Date"].dt.strftime("%Y-%m-%d"), agg_df["Count"],
+bars = plt.bar(agg_df["Date"].astype(str), agg_df["Count"],
                color=agg_df["Highlight"].map({True: "orange", False: "lightgray"}))
 
-# Annotate on top of the bars
+# Add count labels above bars
 for bar in bars:
     height = bar.get_height()
     plt.annotate(f'{height}', xy=(bar.get_x() + bar.get_width() / 2, height),
-                 xytext=(0, 5), textcoords="offset points", ha='center', va='bottom', fontsize=9)
+                 xytext=(0, 5), textcoords="offset points", ha='center', fontsize=9)
 
-# Axis formatting
+# Format chart
 plt.xticks(rotation=45, ha="right")
 plt.xlabel("Date")
 plt.ylabel("Total Records")
-plt.title("Aggregated Total Records per Date with Highlighted Dates")
+plt.title("Daily Total Records with Highlighted Dates")
 plt.tight_layout()
 plt.show()
