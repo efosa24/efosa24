@@ -1,27 +1,36 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# Load the data
-df = pd.read_csv("your_data.csv", parse_dates=["Date"])  # Ensure 'Date' column is parsed correctly
+# Load your dataset (make sure the 'Date' column is properly parsed as datetime)
+df = pd.read_csv("your_data.csv", parse_dates=["Date"])
 
-# Define the dates to highlight
+# Define specific dates to highlight
 highlight_dates = pd.to_datetime(["2025-05-02", "2025-05-09", "2025-05-16", "2025-05-23"])
 
-# Total count of entries per date
+# Count total entries per date
 total_per_date = df["Date"].value_counts().sort_index()
 
-# Highlighted entries
-highlight_df = df[df["Date"].isin(highlight_dates)]
-highlight_counts = highlight_df["Date"].value_counts().sort_index()
+# Create a DataFrame for plotting with a 'highlight' column
+plot_df = total_per_date.reset_index()
+plot_df.columns = ["Date", "Count"]
+plot_df["Highlight"] = plot_df["Date"].isin(highlight_dates)
 
 # Plot
-plt.figure(figsize=(12, 6))
-plt.bar(total_per_date.index, total_per_date.values, label="Total", color="lightgray")
-plt.bar(highlight_counts.index, highlight_counts.values, label="Highlighted Dates", color="orange")
-plt.xticks(rotation=45)
+plt.figure(figsize=(14, 6))
+bars = plt.bar(plot_df["Date"].dt.strftime("%Y-%m-%d"), plot_df["Count"],
+               color=plot_df["Highlight"].map({True: "orange", False: "lightgray"}))
+
+# Annotate bars with values
+for bar in bars:
+    height = bar.get_height()
+    plt.annotate(f'{height}', xy=(bar.get_x() + bar.get_width() / 2, height),
+                 xytext=(0, 3), textcoords="offset points", ha='center', fontsize=8)
+
+# Axis formatting
+plt.xticks(rotation=45, ha="right")
 plt.xlabel("Date")
-plt.ylabel("Count")
-plt.title("Total vs Highlighted Dates")
-plt.legend()
+plt.ylabel("Record Count")
+plt.title("Total Records by Date with Highlighted Dates")
 plt.tight_layout()
 plt.show()
+#############################
