@@ -1,4 +1,4 @@
-# Import necessary libraries 
+# Full End-to-End Forecasting Script with Sample Data and Output
 
 import pandas as pd
 import numpy as np
@@ -8,18 +8,32 @@ from prophet import Prophet
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 from statsmodels.tsa.arima.model import ARIMA
 from sklearn.metrics import mean_squared_error
+from sklearn.ensemble import RandomForestRegressor
+from xgboost import XGBRegressor
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
 import warnings
 
 warnings.filterwarnings("ignore")
 
-# -------------------------------
-# 1. Load and Prepare Data
-# -------------------------------
+# ---------------------------------------------
+# 0. Sample Data Generation
+# ---------------------------------------------
+data = {
+    'tracking_no_link': [f'TR{i}' for i in range(1, 101)],
+    'seriousness': np.random.choice(['Serious', 'Non-Serious', 'Lack of Effect', 'AE Level 1'], 100),
+    'company': np.random.choice(['APAC', 'EMEA', 'LATAM', 'North America Consumer', 'North America Drug'], 100),
+    'iss_entrd_pqms': pd.date_range(start='2021-01-01', periods=100, freq='W'),
+    'product': np.random.choice(['Product A', 'Product B', 'Product C', 'Product D'], 100),
+    'litigation': np.random.choice(['Yes', 'No'], 100),
+    'prog_event': np.random.choice(['Event 1', 'Event 2', 'Event 3'], 100),
+    'reg_class': np.random.choice(['MEDICAL DEVICE', 'MEDICAL DEVICE II', 'NON-MEDICAL'], 100)
+}
+df = pd.DataFrame(data)
 
-df = pd.concat([df0,df1,df2], ignore_index=True)
-#Drop the duplicates 
-#Remove AEs except for Med devices
-# Assign priority
+# ---------------------------------------------
+# 1. Data Cleaning & Feature Engineering
+# ---------------------------------------------
 def assign_priority(seriousness):
     if seriousness in ["Serious", "Priority"]:
         return 1
@@ -27,16 +41,12 @@ def assign_priority(seriousness):
         return 2
     elif seriousness in ["Lack of Effect"]:
         return 3
-    elif seriousness in [ "Adverse Event", "AE Level 1", "AE Level 2", "AE Level 3", "Serious AE"]:
+    elif seriousness in ["Adverse Event", "AE Level 1", "AE Level 2", "AE Level 3", "Serious AE"]:
         return 4
     elif seriousness == "Preference":
         return 5
     return None
 
-df['Priority'] = df['seriousness'].apply(assign_priority)
-df = df.sort_values(by=['tracking_no_link', 'Priority']).drop_duplicates('tracking_no_link', keep='first')
-
-# Enterprise classification
 def processed_data(df):
     df['Enterprise'] = np.where(
         df['seriousness'].isin(['Adverse Event', 'AE Level 1', 'AE Level 2', 'AE Level 3', 'Serious AE']),
@@ -49,173 +59,129 @@ def processed_data(df):
     )
     return df[~((df['Enterprise'] == 'Adverse Event') & (~df['reg_class'].isin(['MEDICAL DEVICE', 'MEDICAL DEVICE II'])))]
 
+df['Priority'] = df['seriousness'].apply(assign_priority)
+df = df.sort_values(by=['tracking_no_link', 'Priority']).drop_duplicates('tracking_no_link', keep='first')
 df = processed_data(df)
 df = df.drop_duplicates(subset='tracking_no_link', keep='first')
-df= df.drop(columns=['translate_rptr','prog_event_txt', 'region'])
-company_to_region = {
-    'APAC':'APAC',
-    'EMEA':'EMEA',
-    'LATAM':'LATAM',
-    'North America Consumer': 'NA',
-    'North America Drug': 'NA',
-    'NUTRITIONALS':'NA'
-}
-df['region'] =  df['company'].map(company_to_region)
 
-df['region'] = df['region'].fillna('NA')
+company_to_region = {
+    'APAC': 'APAC', 'EMEA': 'EMEA', 'LATAM': 'LATAM',
+    'North America Consumer': 'NA', 'North America Drug': 'NA', 'NUTRITIONALS': 'NA'
+}
+df['region'] = df['company'].map(company_to_region).fillna('NA')
 df['iss_entrd_pqms'] = pd.to_datetime(df['iss_entrd_pqms'], errors='coerce')
 df['Month'] = df['iss_entrd_pqms'].dt.to_period('M').dt.to_timestamp()
 df['Complaint Count'] = 1
-#df = df.dropna(subset=['iss_entrd_pqms', 'region'])
 
-df['Month'] = pd.to_datetime(df['iss_entrd_pqms']).dt.to_period('M').dt.to_timestamp()
-
-# Add global
 global_df = df.groupby('Month', as_index=False)['Complaint Count'].sum()
 global_df['region'] = 'Global'
 df = pd.concat([df, global_df], ignore_index=True)
 
-# -----------------------------
-# 2. Forecasting Function
-# -----------------------------
-def evaluate_models(monthly_df):
-    monthly_df = monthly_df.set_index('Month').resample('M').sum()
-    y = monthly_df['Complaint Count'].dropna()
+for col in ['product', 'litigation', 'prog_event']:
+    df[col] = df[col].astype(str)
+    df[col] = LabelEncoder().fit_transform(df[col])
 
-    if len(y) < 12 or y.nunique() < 2:
-        return None
+df = df.sort_values(['product', 'Month'])
+df['Lag_1'] = df.groupby('product')['Complaint Count'].shift(1)
+df['Lag_2'] = df.groupby('product')['Complaint Count'].shift(2)
+df.dropna(subset=['Lag_1', 'Lag_2'], inplace=True)
 
-    models = {}
+# ---------------------------------------------
+# 2. Forecasting Models
+# ---------------------------------------------
+def run_prophet(df):
+    prophet_df = df[['Month', 'Complaint Count', 'product', 'litigation', 'prog_event', 'Lag_1', 'Lag_2']].copy()
+    prophet_df.rename(columns={'Month': 'ds', 'Complaint Count': 'y'}, inplace=True)
+    model = Prophet()
+    for col in ['product', 'litigation', 'prog_event', 'Lag_1', 'Lag_2']:
+        model.add_regressor(col)
+    model.fit(prophet_df)
+    future = prophet_df[['ds', 'product', 'litigation', 'prog_event', 'Lag_1', 'Lag_2']].copy()
+    last_row = future.iloc[-1:]
+    future = pd.concat([future, pd.concat([last_row]*12)], ignore_index=True)
+    future['ds'] = pd.date_range(start=future['ds'].max() + pd.offsets.MonthBegin(), periods=12, freq='M')
+    forecast = model.predict(future)
+    return forecast
 
-    # Prophet
+def run_random_forest(df):
+    X = df[['product', 'litigation', 'prog_event', 'Lag_1', 'Lag_2']]
+    y = df['Complaint Count']
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=12, shuffle=False)
+    model = RandomForestRegressor()
+    model.fit(X_train, y_train)
+    preds = model.predict(X_test)
+    return preds, y_test.values
+
+def run_xgboost(df):
+    X = df[['product', 'litigation', 'prog_event', 'Lag_1', 'Lag_2']]
+    y = df['Complaint Count']
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=12, shuffle=False)
+    model = XGBRegressor()
+    model.fit(X_train, y_train)
+    preds = model.predict(X_test)
+    return preds, y_test.values
+
+# ---------------------------------------------
+# 3. Forecast by Region/Product/Global
+# ---------------------------------------------
+def evaluate_forecast(sub_df, label):
+    os.makedirs('forecast_outputs', exist_ok=True)
+    result = {}
     try:
-        prophet_df = y.reset_index().rename(columns={'Month': 'ds', 'Complaint Count': 'y'})
-        model = Prophet(yearly_seasonality='auto', changepoint_prior_scale=0.1)
-        model.fit(prophet_df)
-        future = model.make_future_dataframe(periods=12, freq='M')
-        forecast = model.predict(future)
-        forecast['yhat'] = forecast['yhat'].round(0)
-        forecast['yhat_lower'] = forecast['yhat_lower'].round(0)
-        forecast['yhat_upper'] = forecast['yhat_upper'].round(0)
-
-        fitted = forecast['yhat'][:len(y)].values
-        resid = y.values - fitted
-        rmse = np.sqrt(mean_squared_error(y, fitted))
-        models['Prophet'] = (rmse, forecast.tail(12), y, fitted, resid, forecast)
+        forecast = run_prophet(sub_df)
+        y_pred = forecast['yhat'][-12:].values
+        y_true = sub_df['Complaint Count'].values[-12:]
+        resid = y_true - y_pred
+        result['Prophet'] = (y_pred, y_true, resid, forecast[['ds', 'yhat_lower', 'yhat_upper']])
     except Exception as e:
-        print(f"Prophet failed: {e}")
-
-    # Holt-Winters
+        print(f"Prophet failed for {label}: {e}")
     try:
-        hw = ExponentialSmoothing(y, seasonal='add', seasonal_periods=12).fit()
-        fitted = hw.fittedvalues
-        forecast_vals = hw.forecast(12).round(0)
-        resid = y.values - fitted
-        rmse = np.sqrt(mean_squared_error(y, fitted))
-        models['Holt-Winters'] = (rmse, forecast_vals, y, fitted, resid, None)
+        rf_pred, rf_true = run_random_forest(sub_df)
+        result['RandomForest'] = (rf_pred, rf_true, rf_true - rf_pred, None)
     except Exception as e:
-        print(f"Holt-Winters failed: {e}")
-
-    # ARIMA
+        print(f"RF failed for {label}: {e}")
     try:
-        arima = ARIMA(y, order=(1, 1, 1)).fit()
-        fitted = arima.predict(start=1, end=len(y), typ='levels')
-        forecast_vals = arima.forecast(12).round(0)
-        resid = y[1:].values - fitted
-        rmse = np.sqrt(mean_squared_error(y[1:], fitted))
-        models['ARIMA'] = (rmse, forecast_vals, y[1:], fitted, resid, None)
+        xgb_pred, xgb_true = run_xgboost(sub_df)
+        result['XGBoost'] = (xgb_pred, xgb_true, xgb_true - xgb_pred, None)
     except Exception as e:
-        print(f"ARIMA failed: {e}")
+        print(f"XGB failed for {label}: {e}")
 
-    if not models:
-        return None
+    for model, (pred, actual, resid, ci) in result.items():
+        plt.figure(figsize=(12, 5))
+        plt.subplot(1, 2, 1)
+        plt.plot(actual, label='Actual', linestyle='--', marker='o')
+        plt.plot(pred, label='Forecast', marker='x')
+        if ci is not None:
+            plt.fill_between(range(len(ci)), ci['yhat_lower'][-12:], ci['yhat_upper'][-12:], color='lightblue', alpha=0.5)
+        plt.title(f"{label} Forecast - {model}")
+        plt.legend()
+        plt.grid(True)
 
-    best_model = min(models.items(), key=lambda x: x[1][0])
-    return best_model[0], best_model[1]
+        plt.subplot(1, 2, 2)
+        plt.plot(resid, label='Residuals', color='orange', marker='d')
+        plt.axhline(0, linestyle='--', color='black')
+        plt.title("Residuals")
+        plt.grid(True)
+        plt.tight_layout()
 
-# -----------------------------
-# 3. Run Forecasts Per Region
-# -----------------------------
-output_dir = "region_forecasts"
-os.makedirs(output_dir, exist_ok=True)
-summary = []
+        plot_path = f"forecast_outputs/{label}_{model}_plot.png"
+        plt.savefig(plot_path)
+        plt.close()
 
-for region in df['region'].unique():
-    print(f"\nProcessing: {region}")
-    region_df = df[df['region'] == region]
-    monthly_df = region_df.groupby('Month', as_index=False)['Complaint Count'].sum()
-
-    result = evaluate_models(monthly_df)
-    if result is None:
-        continue
-
-    best_model_name, (rmse, forecast, y_true, fitted, resid, full_forecast) = result
-    rmse_percent =(rmse/y_true.mean())*100
-    if rmse_percent < 10:
-        print('RMSE is less than 10% of the average actual complaints.')
-    else:
-        print('RMSE ids greater than or equal to 10%')
-    # Prepare forecast DataFrame
-    if isinstance(forecast, pd.DataFrame):
-        forecast_df = forecast.rename(columns={
-            'ds': 'Month',
-            'yhat': 'Predicted Complaints',
-            'yhat_lower': 'Lower Bound',
-            'yhat_upper': 'Upper Bound'
-        })[['Month', 'Predicted Complaints', 'Lower Bound', 'Upper Bound']]
-    else:
         forecast_df = pd.DataFrame({
-            'Month': pd.date_range(start=monthly_df['Month'].max() + pd.offsets.MonthBegin(), periods=12, freq='M'),
-            'Predicted Complaints': forecast.values
+            'Month': pd.date_range(start=sub_df['Month'].max() + pd.offsets.MonthBegin(), periods=12, freq='M'),
+            'Forecast': pred,
+            'Actual': actual,
+            'Residual': resid
         })
+        forecast_df.to_excel(f"forecast_outputs/{label}_{model}_forecast.xlsx", index=False)
 
-    forecast_path = os.path.join(output_dir, f"{region}_forecast.xlsx")
-    forecast_df.to_excel(forecast_path, index=False)
+# Run forecasts
+evaluate_forecast(df[df['region'] == 'Global'], 'Global')
+for reg in df['region'].unique():
+    evaluate_forecast(df[df['region'] == reg], f"Region_{reg}")
+top_products = df['product'].value_counts().nlargest(5).index.tolist()
+for prod in top_products:
+    evaluate_forecast(df[df['product'] == prod], f"Product_{prod}")
 
-    # Plot Forecast and Residuals
-    plt.figure(figsize=(14, 6))
-
-    # Forecast Plot
-    plt.subplot(1, 2, 1)
-    plt.plot(y_true.index, y_true.values, label='Actual', color='black', linestyle='dashed')
-    plt.plot(y_true.index, fitted, label='Fitted', linewidth=2)
-    if full_forecast is not None:
-        plt.fill_between(full_forecast['ds'], full_forecast['yhat_lower'], full_forecast['yhat_upper'],
-                         color='skyblue', alpha=0.4, label='Confidence Interval')
-        plt.plot(full_forecast['ds'], full_forecast['yhat'], label='Forecast', color='blue')
-    plt.title(f"{region} - {best_model_name} Forecast")
-    plt.xlabel("Month")
-    plt.ylabel("Complaints")
-    plt.xticks(rotation=45)
-    plt.grid(True)
-    plt.legend()
-
-    # Residual Plot
-    plt.subplot(1, 2, 2)
-    plt.plot(y_true.index, resid, marker='o', linestyle='-')
-    plt.axhline(0, color='red', linestyle='--')
-    plt.title(f"{region} - Residuals")
-    plt.xticks(rotation=45)
-    plt.grid(True)
-
-    plt.tight_layout()
-    plot_path = os.path.join(output_dir, f"{region}_{best_model_name}_plot.png")
-    plt.savefig(plot_path)
-    plt.close()
-
-    summary.append({
-        'Region': region,
-        'Best Model': best_model_name,
-        'RMSE': round(rmse, 2),
-        'RMSE of % mean': round(rmse_percent,2),
-        'Forecast File': forecast_path,
-        'Plot File': plot_path
-    })
-
-# -----------------------------
-# 4. Save Summary Report
-# -----------------------------
-summary_df = pd.DataFrame(summary)
-summary_df.to_excel(os.path.join(output_dir, "forecast_summary.xlsx"), index=False)
-
-print("\nForecasting complete. All outputs saved in:", output_dir)
+print("✅ Forecasting complete. Check 'forecast_outputs' folder for results.")
