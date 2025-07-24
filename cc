@@ -42,3 +42,9 @@ THEN
    END
 ELSE NULL
 END
+######################
+IF { FIXED [Tracking Number] : MAX(
+    IF [Process Step] = "Investigation" OR [Process Step] = "Triage complete" THEN 1 ELSE 0 END
+) } = 1 THEN "Investigation"
+ELSE [Process Step]
+END
