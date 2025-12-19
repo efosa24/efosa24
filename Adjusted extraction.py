@@ -43,12 +43,12 @@ def extract_data_for_previous_month(df):
     
     return filtered_data
 
-# Example usage:
-# Assuming df is your DataFrame containing the 'Date Entered' column from GCC
-df = pd.read_csv('your_gcc_data.csv')  # Load your data here
+#Load my data that contains the relevant fields
+df = pd.read_csv('gcc_data.csv')  # Load your data here
 
 # Extract data for the previous month
 extracted_data = extract_data_for_previous_month(df)
 
 # Output the extracted data
 print(extracted_data)
+
