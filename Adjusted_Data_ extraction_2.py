@@ -519,11 +519,11 @@ load_data_to_excel4(Sorted_data4, "McNeil", df_pivot4)
 
 
 # Define email parameters
-to = "feriam01@kenvue.com"
+to = "festuseriamiatoe@gmail.com"
 subject = "Report"
 body = "Please find the attached report."
 attachment_path = "path/to/your/report.pdf"
-from_email = "feriam01@kenvue.com"
+from_email = "xxxxxxx@gmail.com"
 
 # Create the email message
 msg = EmailMessage()
@@ -543,3 +543,4 @@ with smtplib.SMTP("smtp.office365.com", port=25) as smtp:
     smtp.send_message(msg)
 
 print("Email sent successfully!")
+
