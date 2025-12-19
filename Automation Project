@@ -10,10 +10,10 @@ from wordcloud import WordCloud
 # ------------------------------
 
 # Load data
-data = pd.read_csv("updated_complaints_data.csv", parse_dates=["Date Received", "Closed Date"])
+data = pd.read_csv("_data.csv", parse_dates=["Date Received", "Closed Date"])
 data['Month-Year'] = data['Date Received'].dt.to_period('M').astype(str)
 
-# Add placeholder 'Product' and 'Complaint Description' if not present
+
 if 'Product' not in data.columns:
     data['Product'] = np.random.choice(['PainRelief', 'ColdCure', 'HeartHealth', 'AllergyFix', 'VitaminBoost'], size=len(data))
 if 'Complaint Description' not in data.columns:
